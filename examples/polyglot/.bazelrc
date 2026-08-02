@@ -1,0 +1,8 @@
+common --enable_bzlmod
+common --incompatible_strict_action_env
+
+test --test_output=errors
+
+# ##BAZEL_DEVTOOLS_MANAGED_BEGIN:bazelrc-import##
+try-import %workspace%/.bazelrc.bazel_devtools
+# ##BAZEL_DEVTOOLS_MANAGED_END:bazelrc-import##

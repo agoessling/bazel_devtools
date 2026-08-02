@@ -1,0 +1,4 @@
+# ##BAZEL_DEVTOOLS_MANAGED_BEGIN:rustfmt-policy##
+max_width = 100
+newline_style = "Unix"
+# ##BAZEL_DEVTOOLS_MANAGED_END:rustfmt-policy##

@@ -1,0 +1,8 @@
+"""Deliberately misformatted, but otherwise clean, Python fixture."""
+
+
+def greeting(
+    name: str
+) -> str:
+    """Return a greeting for ``name``."""
+    return f"Hello, {name}!"

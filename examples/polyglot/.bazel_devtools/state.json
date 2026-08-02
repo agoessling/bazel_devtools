@@ -1,0 +1,104 @@
+{
+  "entries": {
+    ".bazel_devtools/basedpyright.json": {
+      "base": "{\n  \"typeCheckingMode\": \"all\",\n  \"reportUnusedCallResult\": \"none\",\n  \"exclude\": [\n    \"**/__pycache__\",\n    \"**/.cache\",\n    \"**/.git\",\n    \"**/.ruff_cache\",\n    \"**/bazel-*\",\n    \"**/external\"\n  ]\n}\n",
+      "block_id": null,
+      "digest": "d0dee023080fc87547b1c5b24515d94aa0c558d036c7e29c36aa318ea1e8cbbc",
+      "ownership": "managed_file",
+      "template_version": "0.1.0"
+    },
+    ".bazel_devtools/ruff.toml": {
+      "base": "line-length = 100\n\n[lint]\nselect = [\"ALL\"]\nignore = [\n    # These rules conflict with Ruff's formatter.\n    \"COM812\",\n    \"ISC001\",\n    # A repository-level license is sufficient; per-file notices add churn.\n    \"CPY001\",\n    # Bazel package boundaries do not imply Python package boundaries.\n    \"INP001\",\n    # Assertions and unittest assertion helpers are valid project policy.\n    \"PT009\",\n    \"PT027\",\n    \"S101\",\n    # These security audits are low-signal for Bazel-owned tool invocations\n    # and Bazel-generated XML.\n    \"S314\",\n    \"S603\",\n    \"S607\",\n    # CLI tools intentionally use print as their user interface.\n    \"T201\",\n]\n\n[lint.pydocstyle]\nconvention = \"google\"\n\n[format]\ndocstring-code-format = true\nline-ending = \"lf\"\n",
+      "block_id": null,
+      "digest": "8af87c889cd2f77dd1731c68de009b97cf3bca4100c421b3a936b376b1481ed9",
+      "ownership": "managed_file",
+      "template_version": "0.1.0"
+    },
+    ".bazelrc": {
+      "base": "try-import %workspace%/.bazelrc.bazel_devtools\n",
+      "block_id": "bazelrc-import",
+      "digest": "5d9c75762a61ea79b870ff32a162077df36f3f13c614ce5e3ddd618c9e2c580c",
+      "ownership": "managed_block",
+      "template_version": "0.1.0"
+    },
+    ".bazelrc.bazel_devtools": {
+      "base": "# Do not synthesize empty __init__.py files in Python runfiles trees.\ncommon --incompatible_default_to_explicit_init_py\n\n# Apply checks to every target requested by `bazel test`.\ntest --aspects=//tools/bazel_devtools:aspects.bzl%ruff\ntest --aspects=//tools/bazel_devtools:aspects.bzl%basedpyright\ntest --aspects=//tools/bazel_devtools:aspects.bzl%ruff_format\ntest --aspects=//tools/bazel_devtools:aspects.bzl%clang_tidy\ntest --aspects=//tools/bazel_devtools:aspects.bzl%clang_format\ntest --aspects=//tools/bazel_devtools:aspects.bzl%rustfmt\ntest --aspects=//tools/bazel_devtools:aspects.bzl%clippy\ntest --@@aspect_rules_lint+//lint:fail_on_violation\ntest --@@rules_rust+//rust/settings:rustfmt.toml=//:rustfmt.toml\ntest --@@rules_rust+//rust/settings:clippy_flags=-Dwarnings,-Dclippy::all,-Dclippy::pedantic,-Dclippy::nursery\ntest --output_groups=+rustfmt_checks,+clippy_checks\n",
+      "block_id": "checks",
+      "digest": "07b8532a4616ce5c2594e3e7e533bf4ca94ad69e2267c6f6e57bf428780428c1",
+      "ownership": "managed_block",
+      "template_version": "0.1.0"
+    },
+    ".clang-format": {
+      "base": "BasedOnStyle: LLVM\nIndentWidth: 4\nContinuationIndentWidth: 4\nColumnLimit: 100\n",
+      "block_id": "clang-format-policy",
+      "digest": "2408ea28963e886a8849730370f559c0c6f10af0420e92b90cc843121f5c2e38",
+      "ownership": "managed_block",
+      "template_version": "0.1.0"
+    },
+    ".clang-tidy": {
+      "base": "# Start from every check, then exclude platform/runtime policies that do not\n# describe ordinary portable C++ and diagnostics that depend on sandbox paths.\nChecks: >-\n  *,\n  -fuchsia-*,\n  -llvmlibc-*,\n  -zircon-*,\n  -llvm-header-guard,\n  -clang-diagnostic-builtin-macro-redefined\nWarningsAsErrors: '*'\nHeaderFilterRegex: '.*'\n",
+      "block_id": "clang-tidy-policy",
+      "digest": "8ac4f50d10f949ba46d9e05fcabf068295eb637f8e2bb9f1002fe7e9e8fde7f9",
+      "ownership": "managed_block",
+      "template_version": "0.1.0"
+    },
+    ".github/workflows/bazel-devtools.yml": {
+      "base": "name: Bazel presubmit\n\non:\n  pull_request:\n  push:\n    branches: [master]\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: bazel-presubmit-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  test:\n    name: Bazel test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2\n        with:\n          persist-credentials: false\n      - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # v0.19.0\n        with:\n          bazelisk-cache: true\n          disk-cache: bazel-presubmit\n          repository-cache: true\n          cache-save: ${{ github.event_name != 'pull_request' }}\n      - name: Test and check Bazel targets\n        run: bazel test //... --test_output=errors\n",
+      "block_id": null,
+      "digest": "865da0021452df0a9d2f831e09aad210fb4d00b65ebe802db536654094a4accc",
+      "ownership": "managed_file",
+      "template_version": "0.1.0"
+    },
+    ".gitignore": {
+      "base": "/compile_commands.json\n/pyrightconfig.json\n/rust-project.json\n/.cache/\n/.ruff_cache/\n/external\n/.bazel_devtools/updates/\n",
+      "block_id": "generated-ide-files",
+      "digest": "3fa710d1fc96670367946cedcf2bda00cd0545db71ee92b32136ee1253decbbf",
+      "ownership": "managed_block",
+      "template_version": "0.1.0"
+    },
+    ".pre-commit-config.yaml": {
+      "base": "minimum_pre_commit_version: \"4.6.0\"\nrepos:\n  - repo: local\n    hooks:\n      - id: bazel-devtools-check\n        name: bazel_devtools checks\n        language: system\n        entry: bazel\n        args:\n          - test\n          - //...\n          - --test_output=errors\n        pass_filenames: false\n        always_run: true\n        require_serial: true\n        stages: [pre-commit]\n",
+      "block_id": null,
+      "digest": "f31d46c86dff842637328472feb3bd54ff274d253295c67dd382c73fff1d5351",
+      "ownership": "managed_file",
+      "template_version": "0.1.0"
+    },
+    "BUILD.bazel": {
+      "base": "exports_files([\n    \".bazel_devtools/basedpyright.json\",\n    \".bazel_devtools/ruff.toml\",\n    \".github/workflows/bazel-devtools.yml\",\n    \".pre-commit-config.yaml\",\n    \".clang-format\",\n    \".clang-tidy\",\n    \".ruff.toml\",\n    \"basedpyright.json\",\n    \"rustfmt.toml\",\n])\n\nalias(\n    name = \"format\",\n    actual = \"@bazel_devtools//tools:format\",\n)\n\nalias(\n    name = \"ide-sync\",\n    actual = \"@bazel_devtools//tools:ide_sync\",\n)\n\nalias(\n    name = \"install-hooks\",\n    actual = \"@bazel_devtools//tools:install-hooks\",\n)\n\nalias(\n    name = \"pre-commit\",\n    actual = \"@bazel_devtools//tools:pre-commit\",\n)\n",
+      "block_id": "root-aliases",
+      "digest": "ad9abf8e28ef9efa7f983cddb8bb4ea708c6ba06e7fd580dc5fec432c0472f5f",
+      "ownership": "managed_block",
+      "template_version": "0.1.0"
+    },
+    "MODULE.bazel": {
+      "base": "bazel_dep(name = \"toolchains_llvm\", version = \"1.8.0\", dev_dependency = True)\nbazel_dep(name = \"hedron_compile_commands\", dev_dependency = True)\ngit_override(\n    module_name = \"hedron_compile_commands\",\n    commit = \"abb61a688167623088f8768cc9264798df6a9d10\",\n    remote = \"https://github.com/hedronvision/bazel-compile-commands-extractor.git\",\n)\n\nbazel_devtools_llvm = use_extension(\n    \"@toolchains_llvm//toolchain/extensions:llvm.bzl\",\n    \"llvm\",\n    dev_dependency = True,\n)\nbazel_devtools_llvm.toolchain(\n    name = \"bazel_devtools_llvm_toolchain\",\n    llvm_version = \"20.1.8\",\n)\nuse_repo(\n    bazel_devtools_llvm,\n    \"bazel_devtools_llvm_toolchain\",\n    \"bazel_devtools_llvm_toolchain_llvm\",\n)\n",
+      "block_id": "ide-dependencies",
+      "digest": "e0556ff17f2aeece0a1a7aaef7ba5f9a5cad24d082ccb2e22ee4400aa98672c6",
+      "ownership": "managed_block",
+      "template_version": "0.1.0"
+    },
+    "rustfmt.toml": {
+      "base": "max_width = 100\nnewline_style = \"Unix\"\n",
+      "block_id": "rustfmt-policy",
+      "digest": "b9ed518da78d5bd695017f9851c13b0889f6ee9c6bcc387bb7c24acae707bb20",
+      "ownership": "managed_block",
+      "template_version": "0.1.0"
+    },
+    "tools/bazel_devtools/BUILD.bazel": {
+      "base": "load(\"@bazel_devtools//tools:defs.bzl\", \"bazel_devtools_formatters\", \"tool_binary\")\n\npackage(default_visibility = [\"//visibility:public\"])\n\ntool_binary(\n    name = \"clang_format\",\n    src = \"@bazel_devtools_llvm_toolchain_llvm//:bin/clang-format\",\n)\n\ntool_binary(\n    name = \"clang_tidy\",\n    src = \"@bazel_devtools_llvm_toolchain_llvm//:bin/clang-tidy\",\n)\n\nbazel_devtools_formatters(\n    name = \"formatters\",\n    clang_format = \":clang_format\",\n)\n",
+      "block_id": "tools",
+      "digest": "cbab7af4f4d131f073b2e0e27813de2d0aa62deb6387bcc3cf42416845c8d618",
+      "ownership": "managed_block",
+      "template_version": "0.1.0"
+    },
+    "tools/bazel_devtools/aspects.bzl": {
+      "base": "load(\n    \"@bazel_devtools//checks:defs.bzl\",\n    \"basedpyright_aspect\",\n    \"clang_format_aspect\",\n    \"lint_clang_tidy_aspect\",\n    \"lint_ruff_aspect\",\n    \"ruff_format_aspect\",\n    \"rust_clippy_aspect\",\n    \"rustfmt_aspect\",\n)\n\nruff = lint_ruff_aspect(\n    binary = Label(\"@bazel_devtools//tools:ruff\"),\n    configs = [\n        Label(\"//:.ruff.toml\"),\n        Label(\"//:.bazel_devtools/ruff.toml\"),\n    ],\n)\n\nbasedpyright = basedpyright_aspect(\n    binary = Label(\"@bazel_devtools//tools:basedpyright\"),\n    config = Label(\"//:basedpyright.json\"),\n    configs = [Label(\"//:.bazel_devtools/basedpyright.json\")],\n)\n\nruff_format = ruff_format_aspect(\n    binary = Label(\"@bazel_devtools//tools:ruff\"),\n    configs = [\n        Label(\"//:.ruff.toml\"),\n        Label(\"//:.bazel_devtools/ruff.toml\"),\n    ],\n)\n\nclang_tidy = lint_clang_tidy_aspect(\n    binary = Label(\"//tools/bazel_devtools:clang_tidy\"),\n    global_config = [Label(\"//:.clang-tidy\")],\n    lint_target_headers = True,\n)\n\nclang_format = clang_format_aspect(\n    binary = Label(\"//tools/bazel_devtools:clang_format\"),\n    config = Label(\"//:.clang-format\"),\n)\n\nrustfmt = rustfmt_aspect\nclippy = rust_clippy_aspect\n",
+      "block_id": "aspects",
+      "digest": "0f80ba06341d164d5660768e943ff90abecbdd10f09add7de96b68ce9412445e",
+      "ownership": "managed_block",
+      "template_version": "0.1.0"
+    }
+  },
+  "installed_version": "0.1.0",
+  "schema_version": 1
+}

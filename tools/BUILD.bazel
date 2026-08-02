@@ -1,0 +1,107 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+load("@rules_python//python/entry_points:py_console_script_binary.bzl", "py_console_script_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "defs.bzl",
+    "self_checks.bzl",
+    "tool_binary.bzl",
+])
+
+filegroup(
+    name = "distribution_files",
+    srcs = glob(
+        ["**"],
+        exclude = ["**/__pycache__/**"],
+    ),
+)
+
+alias(
+    name = "ruff",
+    actual = "@aspect_rules_lint//lint:ruff_bin",
+)
+
+py_library(
+    name = "bazel_support",
+    srcs = ["bazel_support.py"],
+    imports = [".."],
+)
+
+py_library(
+    name = "bazel_wrapper",
+    srcs = ["bazel_wrapper.py"],
+    imports = [".."],
+)
+
+py_library(
+    name = "setup_lib",
+    srcs = [
+        "setup_lib.py",
+        "templates.py",
+    ],
+    imports = [".."],
+)
+
+py_binary(
+    name = "format",
+    srcs = ["format_targets.py"],
+    legacy_create_init = 0,
+    main = "format_targets.py",
+    deps = [":bazel_support"],
+)
+
+py_binary(
+    name = "ide_sync",
+    srcs = ["ide_sync.py"],
+    legacy_create_init = 0,
+    main = "ide_sync.py",
+    deps = [
+        ":bazel_support",
+        ":bazel_wrapper",
+    ],
+)
+
+py_binary(
+    name = "setup",
+    srcs = ["setup.py"],
+    legacy_create_init = 0,
+    main = "setup.py",
+    deps = [":setup_lib"],
+)
+
+py_console_script_binary(
+    name = "basedpyright",
+    legacy_create_init = 0,
+    pkg = "@bazel_devtools_pypi//basedpyright",
+    python_version = "3.14",
+    script = "basedpyright",
+)
+
+py_console_script_binary(
+    name = "basedpyright-langserver",
+    legacy_create_init = 0,
+    pkg = "@bazel_devtools_pypi//basedpyright",
+    python_version = "3.14",
+    script = "basedpyright-langserver",
+)
+
+py_binary(
+    name = "pre-commit",
+    srcs = ["pre_commit.py"],
+    legacy_create_init = 0,
+    main = "pre_commit.py",
+    python_version = "3.14",
+    deps = [
+        ":bazel_support",
+        "@bazel_devtools_pypi//pre_commit",
+    ],
+)
+
+py_binary(
+    name = "install-hooks",
+    srcs = ["install_hooks.py"],
+    legacy_create_init = 0,
+    main = "install_hooks.py",
+    deps = [":bazel_support"],
+)

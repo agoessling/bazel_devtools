@@ -1,0 +1,8 @@
+{
+  "extends": ".bazel_devtools/basedpyright.json",
+  "include": [
+    "e2e/*.py",
+    "tests/unit",
+    "tools"
+  ]
+}

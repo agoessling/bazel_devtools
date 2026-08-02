@@ -1,0 +1,11 @@
+common --enable_bzlmod
+common --announce_rc
+common --incompatible_strict_action_env
+common --incompatible_default_to_explicit_init_py
+
+build --keep_going
+
+test --test_output=errors
+test --aspects=//tools:self_checks.bzl%ruff
+test --aspects=//tools:self_checks.bzl%basedpyright
+test --aspects=//tools:self_checks.bzl%ruff_format

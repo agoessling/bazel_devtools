@@ -1,0 +1,7 @@
+# Repository-specific Ruff overrides belong in this file.
+extend = ".bazel_devtools/ruff.toml"
+
+[lint.per-file-ignores]
+# Test names describe behavior; repeating them as docstrings adds no signal.
+"e2e/**/*.py" = ["D101", "D102", "D103", "D107"]
+"tests/**/*.py" = ["D100", "D101", "D102", "D107"]

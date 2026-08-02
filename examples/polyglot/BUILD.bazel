@@ -1,0 +1,35 @@
+package(default_visibility = ["//visibility:public"])
+
+# ##BAZEL_DEVTOOLS_MANAGED_BEGIN:root-aliases##
+exports_files([
+    ".bazel_devtools/basedpyright.json",
+    ".bazel_devtools/ruff.toml",
+    ".github/workflows/bazel-devtools.yml",
+    ".pre-commit-config.yaml",
+    ".clang-format",
+    ".clang-tidy",
+    ".ruff.toml",
+    "basedpyright.json",
+    "rustfmt.toml",
+])
+
+alias(
+    name = "format",
+    actual = "@bazel_devtools//tools:format",
+)
+
+alias(
+    name = "ide-sync",
+    actual = "@bazel_devtools//tools:ide_sync",
+)
+
+alias(
+    name = "install-hooks",
+    actual = "@bazel_devtools//tools:install-hooks",
+)
+
+alias(
+    name = "pre-commit",
+    actual = "@bazel_devtools//tools:pre-commit",
+)
+# ##BAZEL_DEVTOOLS_MANAGED_END:root-aliases##

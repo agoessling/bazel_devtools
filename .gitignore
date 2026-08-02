@@ -1,0 +1,8 @@
+/bazel-*
+/.bazel/
+/.pytest_cache/
+/.ruff_cache/
+/pyrightconfig.json
+/**/__pycache__/
+*.pyc
+/.bazel_devtools/updates/

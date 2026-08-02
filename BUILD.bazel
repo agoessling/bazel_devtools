@@ -1,0 +1,130 @@
+load("@bazel_binaries//:defs.bzl", "bazel_binaries")
+load(
+    "@rules_bazel_integration_test//bazel_integration_test:defs.bzl",
+    "bazel_integration_test",
+)
+
+package(default_visibility = ["//visibility:public"])
+
+alias(
+    name = "ide-sync",
+    actual = "//tools:ide_sync",
+)
+
+exports_files([
+    ".bazel_devtools/basedpyright.json",
+    ".bazel_devtools/ruff.toml",
+    ".github/workflows/ci.yml",
+    ".pre-commit-config.yaml",
+    ".ruff.toml",
+    "LICENSE",
+    "MODULE.bazel",
+    "README.md",
+    "basedpyright.json",
+    "requirements.in",
+    "requirements_lock.txt",
+])
+
+filegroup(
+    name = "distribution_files",
+    srcs = glob([
+        ".*",
+        ".bazel_devtools/**",
+        "*",
+    ]) + [
+        "//checks:distribution_files",
+        "//e2e:distribution_files",
+        "//tools:distribution_files",
+    ],
+)
+
+# This child module is intentionally hidden from the parent module by
+# .bazelignore. Keep its committed fixture inputs explicit so integration tests
+# can still materialize it without treating its BUILD files as parent targets.
+filegroup(
+    name = "polyglot_workspace_files",
+    srcs = [
+        "examples/polyglot/.bazel_devtools/basedpyright.json",
+        "examples/polyglot/.bazel_devtools/ruff.toml",
+        "examples/polyglot/.bazel_devtools/state.json",
+        "examples/polyglot/.github/workflows/bazel-devtools.yml",
+        "examples/polyglot/.pre-commit-config.yaml",
+        "examples/polyglot/.bazelrc",
+        "examples/polyglot/.bazelrc.bazel_devtools",
+        "examples/polyglot/.bazelversion",
+        "examples/polyglot/.clang-format",
+        "examples/polyglot/.clang-tidy",
+        "examples/polyglot/.gitignore",
+        "examples/polyglot/.ruff.toml",
+        "examples/polyglot/BUILD.bazel",
+        "examples/polyglot/MODULE.bazel",
+        "examples/polyglot/MODULE.bazel.lock",
+        "examples/polyglot/basedpyright.json",
+        "examples/polyglot/cpp/BUILD.bazel",
+        "examples/polyglot/cpp/greeting.cc",
+        "examples/polyglot/cpp/greeting.h",
+        "examples/polyglot/cpp/greeting_test.cc",
+        "examples/polyglot/python/BUILD.bazel",
+        "examples/polyglot/python/greeting.py",
+        "examples/polyglot/python/greeting_test.py",
+        "examples/polyglot/rust/BUILD.bazel",
+        "examples/polyglot/rust/greeting.rs",
+        "examples/polyglot/rust/greeting_test.rs",
+        "examples/polyglot/rustfmt.toml",
+        "examples/polyglot/tools/bazel_devtools/BUILD.bazel",
+        "examples/polyglot/tools/bazel_devtools/aspects.bzl",
+    ],
+)
+
+bazel_integration_test(
+    name = "polyglot_integration_test",
+    bazel_binaries = bazel_binaries,
+    bazel_version = bazel_binaries.versions.current,
+    data = [
+        "@actionlint_linux_x86_64//:actionlint",
+        "@bazel_binaries_bazelisk//:bazelisk",
+        "@neovim_linux_x86_64//:bin/nvim",
+        "@neovim_linux_x86_64//:dist",
+    ],
+    env = {
+        "BAZEL_DEVTOOLS_ACTIONLINT": "$(rootpath @actionlint_linux_x86_64//:actionlint)",
+        "BAZEL_DEVTOOLS_BAZELISK": "$(rootpath @bazel_binaries_bazelisk//:bazelisk)",
+        "BAZEL_DEVTOOLS_NVIM": "$(rootpath @neovim_linux_x86_64//:bin/nvim)",
+    },
+    tags = [
+        "exclusive",
+        "manual",
+    ],
+    test_runner = "//e2e:integration_runner",
+    workspace_files = [
+        ":distribution_files",
+        ":polyglot_workspace_files",
+    ],
+    workspace_path = "examples/polyglot",
+)
+
+test_suite(
+    name = "fast_tests",
+    tests = [
+        "//tests/unit:bazel_support_test",
+        "//tests/unit:bazel_wrapper_test",
+        "//tests/unit:install_hooks_test",
+        "//tests/unit:presubmit_config_test",
+        "//tests/unit:setup_lib_test",
+    ],
+)
+
+test_suite(
+    name = "integration_tests",
+    tags = ["manual"],
+    tests = [":polyglot_integration_test"],
+)
+
+test_suite(
+    name = "release_tests",
+    tags = ["manual"],
+    tests = [
+        ":fast_tests",
+        ":integration_tests",
+    ],
+)

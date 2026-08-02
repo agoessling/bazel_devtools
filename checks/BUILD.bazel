@@ -1,0 +1,31 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "basedpyright.bzl",
+    "defs.bzl",
+    "format.bzl",
+    "ruff.bzl",
+])
+
+filegroup(
+    name = "distribution_files",
+    srcs = glob(["**"]),
+)
+
+bzl_library(
+    name = "defs",
+    srcs = [
+        "basedpyright.bzl",
+        "defs.bzl",
+        "format.bzl",
+        "ruff.bzl",
+    ],
+    deps = [
+        "@aspect_rules_lint//lint:clang_tidy.bzl",
+        "@aspect_rules_lint//lint:ruff",
+        "@rules_python//python:defs",
+        "@rules_rust//rust:defs.bzl",
+    ],
+)

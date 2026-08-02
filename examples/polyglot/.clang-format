@@ -1,0 +1,6 @@
+# ##BAZEL_DEVTOOLS_MANAGED_BEGIN:clang-format-policy##
+BasedOnStyle: LLVM
+IndentWidth: 4
+ContinuationIndentWidth: 4
+ColumnLimit: 100
+# ##BAZEL_DEVTOOLS_MANAGED_END:clang-format-policy##

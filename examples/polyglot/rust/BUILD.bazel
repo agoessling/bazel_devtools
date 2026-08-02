@@ -1,0 +1,14 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+rust_library(
+    name = "greeting",
+    srcs = ["greeting.rs"],
+    edition = "2024",
+)
+
+rust_test(
+    name = "greeting_test",
+    srcs = ["greeting_test.rs"],
+    edition = "2024",
+    deps = [":greeting"],
+)

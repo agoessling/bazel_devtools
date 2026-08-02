@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    name: Fast / Bazel ${{ matrix.bazel }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        bazel: [9.0.2, 9.2.0]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # v0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: fast-${{ matrix.bazel }}
+          repository-cache: true
+          cache-save: ${{ github.event_name != 'pull_request' }}
+      - name: Run fast tests
+        env:
+          USE_BAZEL_VERSION: ${{ matrix.bazel }}
+        run: bazel test //... --test_output=errors
+
+  consumer:
+    name: Polyglot consumer and Neovim
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # v0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: consumer
+          repository-cache: true
+          cache-save: ${{ github.event_name != 'pull_request' }}
+      - run: bazel test //:integration_tests --test_output=errors

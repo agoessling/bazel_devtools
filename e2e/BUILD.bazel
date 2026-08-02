@@ -1,0 +1,23 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "integration_runner",
+    srcs = ["integration_runner.py"],
+    legacy_create_init = 0,
+    main = "integration_runner.py",
+)
+
+py_binary(
+    name = "probe_current_neovim",
+    srcs = ["probe_current_neovim.py"],
+    data = ["current_neovim_probe.lua"],
+    legacy_create_init = 0,
+    main = "probe_current_neovim.py",
+)
+
+filegroup(
+    name = "distribution_files",
+    srcs = glob(["**"]),
+)

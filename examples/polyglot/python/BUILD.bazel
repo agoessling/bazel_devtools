@@ -1,0 +1,27 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library", "py_test")
+
+# Generated sources deliberately contain a lint violation. The target proves
+# that checks and the write-mode formatter only inspect repository sources.
+genrule(
+    name = "generate_unformatted",
+    outs = ["generated_unformatted.py"],
+    cmd = "printf 'import os\\n' > $@",
+)
+
+py_library(
+    name = "generated_greeting",
+    srcs = [":generate_unformatted"],
+)
+
+py_library(
+    name = "greeting",
+    srcs = ["greeting.py"],
+    imports = [".."],
+)
+
+py_test(
+    name = "greeting_test",
+    srcs = ["greeting_test.py"],
+    main = "greeting_test.py",
+    deps = [":greeting"],
+)

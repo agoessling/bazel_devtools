@@ -1,0 +1,13 @@
+# ##BAZEL_DEVTOOLS_MANAGED_BEGIN:clang-tidy-policy##
+# Start from every check, then exclude platform/runtime policies that do not
+# describe ordinary portable C++ and diagnostics that depend on sandbox paths.
+Checks: >-
+  *,
+  -fuchsia-*,
+  -llvmlibc-*,
+  -zircon-*,
+  -llvm-header-guard,
+  -clang-diagnostic-builtin-macro-redefined
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*'
+# ##BAZEL_DEVTOOLS_MANAGED_END:clang-tidy-policy##
