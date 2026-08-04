@@ -15,11 +15,18 @@ The default policy uses:
 - editor-owned language-server binaries with Bazel-generated project metadata.
 
 Lint and type-check defaults start strict: Ruff enables every stable rule,
-BasedPyright uses `all`, clang-tidy starts from every check, and Clippy enables
-`all`, `pedantic`, and `nursery` with warnings denied. clang-tidy excludes
-platform/runtime policies (Fuchsia, LLVM libc, and Zircon) plus diagnostics
-whose result depends on Bazel's sandbox path. Clippy's `cargo` group is excluded
-because it invokes Cargo metadata and does not describe a Bazel-native build.
+BasedPyright uses `all`, clang-tidy enables reviewed general-purpose families,
+and Clippy enables `all`, `pedantic`, and `nursery` with warnings denied.
+clang-tidy begins from `-*`, so vendor-specific families cannot enter the policy
+implicitly, and records narrow platform, API-design, and high-noise exclusions,
+including the diagnostic that requires redundant parentheses around
+conventional mathematical operator precedence. Its resolved LLVM 22.1.6
+inventory is regression tested so toolchain upgrades require policy review.
+The reviewed high-noise exclusions include LLVM 22's unchecked-container-access
+rule, which cannot offer `.at()` for C++20 spans and is pervasive even when
+callers have already established the relevant invariant.
+Clippy's `cargo` group is excluded because it invokes Cargo metadata and does
+not describe a Bazel-native build.
 The managed policy contains only compatibility exceptions; repository-specific
 exceptions should be narrow and documented. The opinionated baseline also
 allows assertions, standard-library `unittest` assertion helpers, CLI output,
@@ -47,13 +54,25 @@ local_path_override(
 ```
 
 ```sh
-bazel run @bazel_devtools//tools:setup -- plan
-bazel run @bazel_devtools//tools:setup -- init
+bazel run @bazel_devtools//tools:setup -- plan --language python --language cpp
+bazel run @bazel_devtools//tools:setup -- init --language python --language cpp
 bazel test //...
 bazel run //:install-hooks
 bazel run @bazel_devtools//tools:format -- //...
 bazel run //:ide-sync
 ```
+
+Repeat `--language` to select any combination of `python`, `cpp`, and `rust`.
+Omitting it during first-time setup installs all three integrations. The
+selection is persisted for `doctor`, `upgrade`, formatting, and IDE metadata
+generation, so an unused language does not pull its formatter or toolchain into
+the consuming repository's configured target graph. Because `plan` is
+read-only, repeat the same selection when running `init`.
+
+Language selection avoids configuring and downloading unused compiler and
+formatter toolchains during normal consumer commands. `bazel_devtools` is still
+one Bazel module, so module resolution can include the rule-set metadata needed
+to support all three languages even when only a subset is installed.
 
 `setup plan` is read-only with respect to repository configuration and setup
 state. It reports every file or block that initialization would add and exits
@@ -125,12 +144,9 @@ clean`. Pre-commit temporarily isolates unstaged changes, while the local hook
 itself never formats or stages files. If the formatting check fails, run
 `bazel run //:format`, review the result, and stage it normally.
 
-The generated GitHub workflow runs for pull requests and pushes to `master`,
-uses read-only permissions, pins Actions by full commit, avoids saving caches
-from pull requests, and cancels superseded runs. Repositories with another
-primary branch should edit the branch filter; setup records that as a local
-override and preserves it during upgrades unless the upstream template also
-changes.
+The generated GitHub workflow runs for pull requests and pushes to every
+branch, uses read-only permissions, pins Actions by full commit, avoids saving
+caches from pull requests, and cancels superseded runs.
 
 ## Upgrade
 
@@ -141,6 +157,14 @@ bazel run @bazel_devtools//tools:setup -- upgrade
 bazel run @bazel_devtools//tools:setup -- doctor
 bazel test //...
 ```
+
+To change the installed integrations, pass the new complete selection to
+`upgrade`, for example `upgrade --language python --language cpp`. Policy files
+for a removed language are left in place but retired from setup management;
+generated checks, formatters, and toolchain configuration stop referencing it.
+If an upgrade reports a conflict, the persisted selection and active generated
+configuration remain unchanged until the conflict is resolved and the command
+is rerun.
 
 Pristine managed content updates automatically. Local content is preserved. If
 both the local copy and upstream template changed, setup writes a unified diff

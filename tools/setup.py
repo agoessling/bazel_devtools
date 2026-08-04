@@ -8,7 +8,17 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from tools.setup_lib import SetupError, doctor, initialize, plan_initialize, upgrade
+from tools.languages import SUPPORTED_LANGUAGES, normalize_languages
+from tools.setup_lib import (
+    Result,
+    SetupError,
+    doctor,
+    initialize,
+    installed_languages,
+    plan_initialize,
+    upgrade,
+)
+from tools.templates import templates_for_languages
 
 
 def _default_workspace() -> Path:
@@ -31,7 +41,49 @@ def _parser() -> argparse.ArgumentParser:
         default=_default_workspace(),
         help="consuming Bazel workspace (defaults to Bazel's invocation workspace)",
     )
+    parser.add_argument(
+        "--language",
+        action="append",
+        choices=SUPPORTED_LANGUAGES,
+        help=(
+            "language integration to install (repeatable; defaults to all on init, "
+            "or the persisted selection afterward)"
+        ),
+    )
     return parser
+
+
+def _selected_languages(
+    command: str,
+    workspace: Path,
+    requested: list[str] | None,
+) -> tuple[str, ...]:
+    existing = installed_languages(workspace)
+    normalized_request = normalize_languages(requested) if requested else None
+    if (
+        command in ("plan", "init")
+        and existing
+        and normalized_request
+        and normalized_request != existing
+    ):
+        msg = "language selection is already installed; use setup upgrade to change it"
+        raise SetupError(msg)
+    if command == "doctor" and normalized_request and normalized_request != existing:
+        msg = "setup doctor validates installed languages; use setup upgrade to change them"
+        raise SetupError(msg)
+    return normalize_languages(normalized_request or existing or SUPPORTED_LANGUAGES)
+
+
+def _run(command: str, workspace: Path, requested: list[str] | None) -> Result:
+    selected = _selected_languages(command, workspace, requested)
+    templates = templates_for_languages(selected)
+    if command == "plan":
+        return plan_initialize(workspace, templates)
+    if command == "init":
+        return initialize(workspace, templates, languages=selected)
+    if command == "upgrade":
+        return upgrade(workspace, templates, languages=selected)
+    return doctor(workspace, templates)
 
 
 def main() -> int:
@@ -40,14 +92,8 @@ def main() -> int:
     command = cast("str", args.command)
     workspace = cast("Path", args.workspace)
     try:
-        if command == "plan":
-            result = plan_initialize(workspace)
-        elif command == "init":
-            result = initialize(workspace)
-        elif command == "upgrade":
-            result = upgrade(workspace)
-        else:
-            result = doctor(workspace)
+        requested = cast("list[str] | None", args.language)
+        result = _run(command, workspace, requested)
     except SetupError as error:
         print(f"bazel_devtools: {error}", file=sys.stderr)
         return 1

@@ -4,10 +4,10 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     ".bazel_devtools/basedpyright.json",
     ".bazel_devtools/ruff.toml",
-    ".github/workflows/bazel-devtools.yml",
-    ".pre-commit-config.yaml",
     ".clang-format",
     ".clang-tidy",
+    ".github/workflows/bazel-devtools.yml",
+    ".pre-commit-config.yaml",
     ".ruff.toml",
     "basedpyright.json",
     "rustfmt.toml",

@@ -10,7 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from tools.templates import BAZEL_DEVTOOLS_VERSION, TEMPLATES, Ownership, Template
+from tools.languages import SUPPORTED_LANGUAGES, normalize_languages
+from tools.templates import (
+    BAZEL_DEVTOOLS_VERSION,
+    TEMPLATES,
+    Ownership,
+    Template,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -88,6 +94,7 @@ class _StateEntry(TypedDict):
 class _State(TypedDict):
     schema_version: int
     installed_version: str | None
+    languages: list[str]
     entries: dict[str, _StateEntry]
 
 
@@ -217,7 +224,12 @@ def _state_entry(value: object, description: str) -> _StateEntry:
 def _read_state(workspace: Path) -> _State:
     path = workspace / STATE_PATH
     if not path.exists():
-        return {"schema_version": 1, "installed_version": None, "entries": {}}
+        return {
+            "schema_version": 2,
+            "installed_version": None,
+            "languages": list(SUPPORTED_LANGUAGES),
+            "entries": {},
+        }
     try:
         decoded: object = json.loads(  # pyright: ignore[reportAny]
             path.read_text(encoding="utf-8")
@@ -228,19 +240,33 @@ def _read_state(workspace: Path) -> _State:
     raw = _object_dict(decoded, f"state in {path}")
     schema_version = raw.get("schema_version")
     installed_version = raw.get("installed_version")
-    if schema_version != 1 or (
+    if schema_version not in (1, 2) or (
         installed_version is not None and not isinstance(installed_version, str)
     ):
         msg = f"unsupported state schema in {path}"
         raise SetupError(msg)
+    raw_languages = raw.get("languages", list(SUPPORTED_LANGUAGES))
+    if not isinstance(raw_languages, list):
+        msg = f"invalid language selection in {path}"
+        raise SetupError(msg)
+    language_values = cast("list[object]", raw_languages)
+    if not all(isinstance(language, str) for language in language_values):
+        msg = f"invalid language selection in {path}"
+        raise SetupError(msg)
+    try:
+        languages = normalize_languages(cast("list[str]", language_values))
+    except ValueError as error:
+        msg = f"invalid language selection in {path}: {error}"
+        raise SetupError(msg) from error
     raw_entries = _object_dict(raw.get("entries"), f"state entries in {path}")
     entries = {
         entry_path: _state_entry(value, f"state entry {entry_path!r} in {path}")
         for entry_path, value in raw_entries.items()
     }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "installed_version": installed_version,
+        "languages": list(languages),
         "entries": entries,
     }
 
@@ -252,6 +278,14 @@ def _write_state(workspace: Path, state: _State) -> None:
         json.dumps(state, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def installed_languages(workspace: Path) -> tuple[str, ...] | None:
+    """Return the installed language selection, or None before initialization."""
+    state = _read_state(_validate_workspace(workspace))
+    if not state["entries"]:
+        return None
+    return tuple(state["languages"])
 
 
 def _entry(template: Template) -> _StateEntry:
@@ -479,28 +513,35 @@ def _bazel_graph_issues(
     template_paths = {template.path for template in templates}
     issues: list[str] = []
     module = workspace / "MODULE.bazel"
-    if "MODULE.bazel" in template_paths:
+    module_template = next(
+        (template for template in templates if template.path == "MODULE.bazel"),
+        None,
+    )
+    if module_template is not None and module_template.content.strip():
         content = module.read_text(encoding="utf-8")
         blocks = parse_blocks(content)
-        if "ide-dependencies" not in blocks:
-            dependencies = sorted(
-                {match.group("name") for match in MODULE_DEPENDENCY_PATTERN.finditer(content)}
+        managed = blocks.get("ide-dependencies")
+        unmanaged = (
+            content if managed is None else content[: managed.begin] + content[managed.end :]
+        )
+        dependencies = sorted(
+            {match.group("name") for match in MODULE_DEPENDENCY_PATTERN.finditer(unmanaged)}
+        )
+        if dependencies:
+            issues.append(
+                _message(
+                    "existing MODULE.bazel declarations overlap bazel_devtools:",
+                    f"{', '.join(dependencies)}; reconcile them with the managed",
+                    "ide-dependencies block before initializing",
+                )
             )
-            if dependencies:
-                issues.append(
-                    _message(
-                        "existing MODULE.bazel declarations overlap bazel_devtools:",
-                        f"{', '.join(dependencies)}; reconcile them with the managed",
-                        "ide-dependencies block before initializing",
-                    )
+        if MODULE_SYMBOL_PATTERN.search(unmanaged):
+            issues.append(
+                _message(
+                    "existing MODULE.bazel symbol bazel_devtools_llvm conflicts with the",
+                    "managed extension name",
                 )
-            if MODULE_SYMBOL_PATTERN.search(content):
-                issues.append(
-                    _message(
-                        "existing MODULE.bazel symbol bazel_devtools_llvm conflicts with the",
-                        "managed extension name",
-                    )
-                )
+            )
 
     build = workspace / "BUILD.bazel"
     if "BUILD.bazel" in template_paths and build.exists():
@@ -659,9 +700,15 @@ def _initialize_template(
     entries[template.path] = _entry(template)
 
 
-def initialize(workspace: Path, templates: Iterable[Template] = TEMPLATES) -> Result:
+def initialize(
+    workspace: Path,
+    templates: Iterable[Template] = TEMPLATES,
+    *,
+    languages: Iterable[str] = SUPPORTED_LANGUAGES,
+) -> Result:
     """Install configuration while preserving existing user-owned content."""
     templates = tuple(templates)
+    selected_languages = normalize_languages(languages)
     preview = plan_initialize(workspace, templates)
     if preview.conflicts:
         details = "\n  - ".join(preview.conflicts)
@@ -671,6 +718,9 @@ def initialize(workspace: Path, templates: Iterable[Template] = TEMPLATES) -> Re
     state = _read_state(workspace)
     entries = state["entries"]
     if entries:
+        if tuple(state["languages"]) != selected_languages:
+            msg = "language selection is already installed; use setup upgrade to change it"
+            raise SetupError(msg)
         result = doctor(workspace, templates)
         result.messages.insert(0, "bazel_devtools is already initialized")
         return result
@@ -683,6 +733,7 @@ def initialize(workspace: Path, templates: Iterable[Template] = TEMPLATES) -> Re
         result.messages.append("run `bazel run //:install-hooks` to enable local presubmit")
 
     state["installed_version"] = BAZEL_DEVTOOLS_VERSION
+    state["languages"] = list(selected_languages)
     _write_state(workspace, state)
     return result
 
@@ -718,10 +769,21 @@ def _preflight_upgrade(
 ) -> None:
     """Validate every old managed input before performing any writes."""
     new_templates = tuple(template for template in templates if template.path not in entries)
-    adoption_issues = _presubmit_adoption_issues(workspace, new_templates)
+    adoption_issues = _brownfield_issues(workspace, new_templates)
+    new_paths = {template.path for template in new_templates}
+    active_module = next(
+        (
+            template
+            for template in templates
+            if template.path == "MODULE.bazel" and template.content.strip()
+        ),
+        None,
+    )
+    if active_module is not None and active_module.path not in new_paths:
+        adoption_issues.extend(_bazel_graph_issues(workspace, (active_module,)))
     if adoption_issues:
         details = "\n  - ".join(adoption_issues)
-        msg = f"upgrade requires presubmit adoption changes:\n  - {details}"
+        msg = f"upgrade requires adoption changes:\n  - {details}"
         raise SetupError(msg)
     for template in templates:
         if template.ownership is Ownership.CREATE_ONLY:
@@ -740,6 +802,36 @@ def _preflight_upgrade(
             if template.block_id not in blocks:
                 msg = f"managed block {template.block_id!r} was removed from {template.path}"
                 raise SetupError(msg)
+
+
+def _upgrade_conflicts(
+    workspace: Path,
+    templates: tuple[Template, ...],
+    entries: dict[str, _StateEntry],
+) -> list[tuple[Template, str]]:
+    """Find three-way conflicts without changing installed configuration."""
+    conflicts: list[tuple[Template, str]] = []
+    for template in templates:
+        if template.ownership is Ownership.CREATE_ONLY:
+            continue
+        previous = entries.get(template.path)
+        if previous is None:
+            continue
+        old_base = _validate_entry(template, previous)["base"]
+        path = workspace / template.path
+        if template.ownership is Ownership.MANAGED_FILE:
+            current = path.read_text(encoding="utf-8")
+            if current not in (old_base, template.content) and template.content != old_base:
+                conflicts.append((template, old_base))
+            continue
+
+        assert template.block_id is not None
+        block = parse_blocks(path.read_text(encoding="utf-8"))[template.block_id]
+        normalized_old = old_base.rstrip("\n") + "\n"
+        normalized_new = template.content.rstrip("\n") + "\n"
+        if block.body not in (normalized_old, normalized_new) and normalized_new != normalized_old:
+            conflicts.append((template, old_base))
+    return conflicts
 
 
 def _adopt_new_managed_template(
@@ -855,9 +947,15 @@ def _upgrade_template(
         _upgrade_managed_block(workspace, template, old_base, entries, result)
 
 
-def upgrade(workspace: Path, templates: Iterable[Template] = TEMPLATES) -> Result:
+def upgrade(
+    workspace: Path,
+    templates: Iterable[Template] = TEMPLATES,
+    *,
+    languages: Iterable[str] = SUPPORTED_LANGUAGES,
+) -> Result:
     """Upgrade pristine policy and preserve or report local overrides."""
     templates = tuple(templates)
+    selected_languages = normalize_languages(languages)
     _validate_templates(templates)
     workspace = _validate_workspace(workspace)
     state = _read_state(workspace)
@@ -867,6 +965,24 @@ def upgrade(workspace: Path, templates: Iterable[Template] = TEMPLATES) -> Resul
         raise SetupError(msg)
     result = Result.empty()
     _preflight_upgrade(workspace, templates, entries)
+    conflicts = _upgrade_conflicts(workspace, templates, entries)
+    if conflicts:
+        for template, old_base in conflicts:
+            patch_path = _write_conflict_patch(workspace, template, old_base, template.content)
+            conflict = (
+                f"{template.path}:{template.block_id}"
+                if template.block_id is not None
+                else template.path
+            )
+            result.conflicts.append(conflict)
+            result.messages.append(f"review upstream changes in {patch_path}")
+        result.messages.append("installed version was not advanced because updates require review")
+        if tuple(state["languages"]) != selected_languages:
+            result.messages.append(
+                "language selection was not changed because updates require review"
+            )
+        return result
+
     for template in templates:
         _upgrade_template(workspace, template, entries, result)
 
@@ -882,8 +998,13 @@ def upgrade(workspace: Path, templates: Iterable[Template] = TEMPLATES) -> Resul
 
     if result.conflicts:
         result.messages.append("installed version was not advanced because updates require review")
+        if tuple(state["languages"]) != selected_languages:
+            result.messages.append(
+                "language selection was not changed because updates require review"
+            )
     else:
         state["installed_version"] = BAZEL_DEVTOOLS_VERSION
+        state["languages"] = list(selected_languages)
     _write_state(workspace, state)
     return result
 
@@ -938,7 +1059,9 @@ def doctor(workspace: Path, templates: Iterable[Template] = TEMPLATES) -> Result
         msg = ".pre-commit-config.yaml is missing the bazel-devtools-check hook"
         raise SetupError(msg)
 
+    languages = ", ".join(state["languages"])
+    version = state.get("installed_version")
     result.messages.append(
-        f"bazel_devtools setup is structurally valid (installed {state.get('installed_version')})"
+        f"bazel_devtools setup is structurally valid (installed {version}; languages: {languages})"
     )
     return result

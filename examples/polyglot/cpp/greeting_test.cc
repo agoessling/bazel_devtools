@@ -3,6 +3,6 @@
 #include <cassert>
 
 auto main() -> int {
-    assert(Greeting("Bazel") == "Hello, Bazel!");
-    return 0;
+  assert(Greeting("Bazel") == "Hello, Bazel!");
+  return 0;
 }

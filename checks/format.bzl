@@ -1,9 +1,18 @@
 """Hermetic formatter-check aspects over source files owned by Bazel targets."""
 
+load("//checks:propagation.bzl", "dependency_infos")
+
 _PYTHON_RULE_KINDS = ["py_binary", "py_library", "py_test"]
 _CPP_RULE_KINDS = ["cc_binary", "cc_library", "cc_test"]
 _PYTHON_EXTENSIONS = ["py", "pyi"]
 _CPP_EXTENSIONS = ["c", "cc", "cpp", "cxx", "c++", "h", "hh", "hpp", "hxx", "inc"]
+
+_ClangFormatPropagationInfo = provider(
+    fields = {
+        "format_checks": "transitive clang-format validation outputs",
+        "validation": "transitive validation outputs",
+    },
+)
 
 
 def _tags(ctx):
@@ -20,6 +29,28 @@ def _owned_sources(ctx, extensions, attributes = ["srcs"]):
 
 def _empty_validation():
     return [OutputGroupInfo(_validation = depset([]), bazel_devtools_format_checks = depset([]))]
+
+
+def _merge_clang_format_outputs(ctx, own = None):
+    dependencies = dependency_infos(ctx.rule.attr, _ClangFormatPropagationInfo)
+    validation = depset(
+        transitive = [dependency.validation for dependency in dependencies] +
+                     ([own._validation] if own else []),
+    )
+    format_checks = depset(
+        transitive = [dependency.format_checks for dependency in dependencies] +
+                     ([own.bazel_devtools_format_checks] if own else []),
+    )
+    return [
+        OutputGroupInfo(
+            _validation = validation,
+            bazel_devtools_format_checks = format_checks,
+        ),
+        _ClangFormatPropagationInfo(
+            format_checks = format_checks,
+            validation = validation,
+        ),
+    ]
 
 
 def _run_check(ctx, mnemonic, binary, arguments, inputs, sources):
@@ -100,17 +131,17 @@ def ruff_format_aspect(binary, configs, rule_kinds = _PYTHON_RULE_KINDS):
 
 
 def _clang_format_impl(target, ctx):
-    if target.label.workspace_name:
+    if target.label.repo_name or ctx.rule == None:
         return _empty_validation()
     tags = _tags(ctx)
     if "no-format" in tags or "no-clang-format" in tags:
-        return _empty_validation()
+        return _merge_clang_format_outputs(ctx)
     if ctx.rule.kind not in ctx.attr._rule_kinds:
-        return _empty_validation()
+        return _merge_clang_format_outputs(ctx)
     sources = _owned_sources(ctx, _CPP_EXTENSIONS, ["srcs", "hdrs", "textual_hdrs"])
     if not sources:
-        return _empty_validation()
-    return _run_check(
+        return _merge_clang_format_outputs(ctx)
+    own = _run_check(
         ctx,
         "ClangFormat",
         ctx.executable._binary,
@@ -122,13 +153,15 @@ def _clang_format_impl(target, ctx):
         ],
         [ctx.file._config],
         sources,
-    )
+    )[0]
+    return _merge_clang_format_outputs(ctx, own)
 
 
-def clang_format_aspect(binary, config, rule_kinds = _CPP_RULE_KINDS):
+def clang_format_aspect(binary, config, rule_kinds = _CPP_RULE_KINDS, attr_aspects = []):
     """Creates a clang-format check aspect for C and C++ targets."""
     return aspect(
         implementation = _clang_format_impl,
+        attr_aspects = attr_aspects,
         attrs = {
             "_binary": attr.label(
                 default = binary,

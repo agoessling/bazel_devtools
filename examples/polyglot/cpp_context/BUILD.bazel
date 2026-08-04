@@ -1,0 +1,14 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+cc_library(
+    name = "context_helper",
+    hdrs = ["context_helper.h"],
+)
+
+cc_library(
+    name = "current_repository",
+    srcs = ["current_repository.cc"],
+    hdrs = ["current_repository.h"],
+    deps = ["@bazel_tools//tools/cpp/runfiles"],
+    implementation_deps = [":context_helper"],
+)

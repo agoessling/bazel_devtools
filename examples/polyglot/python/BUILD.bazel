@@ -25,3 +25,11 @@ py_test(
     main = "greeting_test.py",
     deps = [":greeting"],
 )
+
+# Plain `bazel test //...` must compile and check this target without running it.
+py_test(
+    name = "manual_contract_test",
+    srcs = ["manual_contract_test.py"],
+    main = "manual_contract_test.py",
+    tags = ["manual"],
+)

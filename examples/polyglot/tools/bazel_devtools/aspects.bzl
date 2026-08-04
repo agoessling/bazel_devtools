@@ -1,16 +1,24 @@
 # ##BAZEL_DEVTOOLS_MANAGED_BEGIN:aspects##
 load(
-    "@bazel_devtools//checks:defs.bzl",
+    "@bazel_devtools//checks:python.bzl",
     "basedpyright_aspect",
+    "ruff_format_aspect",
+    "ruff_lint_aspect",
+)
+
+load(
+    "@bazel_devtools//checks:cpp.bzl",
     "clang_format_aspect",
     "lint_clang_tidy_aspect",
-    "lint_ruff_aspect",
-    "ruff_format_aspect",
+)
+
+load(
+    "@bazel_devtools//checks:rust.bzl",
     "rust_clippy_aspect",
     "rustfmt_aspect",
 )
 
-ruff = lint_ruff_aspect(
+ruff = ruff_lint_aspect(
     binary = Label("@bazel_devtools//tools:ruff"),
     configs = [
         Label("//:.ruff.toml"),

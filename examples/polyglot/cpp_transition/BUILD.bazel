@@ -1,0 +1,33 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load(":defs.bzl", "configured_artifact")
+
+package(default_visibility = ["//visibility:public"])
+
+constraint_setting(name = "configured_target_setting")
+
+constraint_value(
+    name = "configured_target",
+    constraint_setting = ":configured_target_setting",
+)
+
+platform(
+    name = "configured_platform",
+    constraint_values = [
+        ":configured_target",
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+cc_binary(
+    name = "configured_binary",
+    srcs = ["configured.c"],
+    deps = ["@external_cpp_fixture//:vendor_policy"],
+    target_compatible_with = [":configured_target"],
+    visibility = ["//visibility:private"],
+)
+
+configured_artifact(
+    name = "configured_entry",
+    configured_target = ":configured_binary",
+)

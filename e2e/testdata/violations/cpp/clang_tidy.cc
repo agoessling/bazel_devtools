@@ -2,4 +2,7 @@
 
 #include <string>
 
-std::string Greeting(const std::string &name) { return "Hello, " + name + "!"; }
+auto Greeting(const std::string &name) -> std::string {
+  const char *punctuation = 0;
+  return "Hello, " + name + (punctuation == 0 ? "!" : "?");
+}

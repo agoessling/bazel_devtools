@@ -9,6 +9,8 @@ import sys
 from typing import TYPE_CHECKING, cast
 
 from tools.bazel_support import bazel_command, bazel_workspace, main_repo_source_path, run_bazel
+from tools.language_support import configured_languages
+from tools.languages import SUPPORTED_LANGUAGES
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,24 +40,29 @@ def _target_expression(patterns: list[str]) -> str:
     return " union ".join(f"({pattern})" for pattern in patterns)
 
 
-def _owned_sources(workspace: Path, patterns: list[str]) -> list[Path]:
+def _owned_sources(
+    workspace: Path,
+    patterns: list[str],
+    selected_languages: tuple[str, ...],
+) -> list[Path]:
     targets = _target_expression(patterns)
     eligible = f'({targets}) except attr("tags", "no-format", ({targets}))'
-    languages = (
-        ("py_(library|binary|test) rule", "no-ruff-format", ("srcs",)),
-        (
+    languages = {
+        "python": ("py_(library|binary|test) rule", "no-ruff-format", ("srcs",)),
+        "cpp": (
             "cc_(library|binary|test) rule",
             "no-clang-format",
             ("srcs", "hdrs", "textual_hdrs"),
         ),
-        (
+        "rust": (
             "rust_(library|binary|test) rule",
             "(no-rustfmt|norustfmt)",
             ("srcs",),
         ),
-    )
+    }
     owned: list[str] = []
-    for rule_kinds, language_opt_out, attributes in languages:
+    for language in selected_languages:
+        rule_kinds, language_opt_out, attributes = languages[language]
         language_targets = f'kind("{rule_kinds}", ({eligible}))'
         language_targets += f' except attr("tags", "{language_opt_out}", ({language_targets}))'
         owned.extend(f"labels({attribute}, ({language_targets}))" for attribute in attributes)
@@ -89,6 +96,12 @@ def main() -> int:
     """Format Bazel-owned sources selected by target patterns."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--language",
+        action="append",
+        choices=SUPPORTED_LANGUAGES,
+        help="format only an installed language integration (repeatable)",
+    )
+    parser.add_argument(
         "targets",
         nargs="*",
         default=["//..."],
@@ -98,8 +111,22 @@ def main() -> int:
     targets = cast("list[str]", args.targets)
     workspace = bazel_workspace()
     try:
-        sources = _owned_sources(workspace, targets or ["//..."])
-    except (RuntimeError, ValueError) as error:
+        configured = configured_languages(workspace)
+        requested = cast("list[str] | None", args.language)
+        selected = tuple(requested) if requested else configured
+        unavailable = sorted(set(selected) - set(configured))
+        if unavailable:
+            print(
+                "language support is not installed for: " + ", ".join(unavailable),
+                file=sys.stderr,
+            )
+            return 1
+        sources = _owned_sources(
+            workspace,
+            targets or ["//..."],
+            selected,
+        )
+    except (RuntimeError, TypeError, ValueError) as error:
         print(error, file=sys.stderr)
         return 1
     if not sources:

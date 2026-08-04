@@ -12,6 +12,95 @@ from getpass import getuser
 from pathlib import Path
 from typing import cast, final
 
+_LANGUAGE_MODULE_EXTRAS = {
+    "cpp": 'bazel_dep(name = "rules_cc", version = "0.2.22")\n',
+    "rust": """\
+bazel_dep(name = "rules_rust", version = "0.73.0")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+    versions = ["1.89.0"],
+)
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all")
+""",
+}
+
+_LANGUAGE_POLICY_PATHS = {
+    "python": (
+        ".bazel_devtools/basedpyright.json",
+        ".bazel_devtools/ruff.toml",
+        ".ruff.toml",
+        "basedpyright.json",
+        "pyrightconfig.json",
+    ),
+    "cpp": (".clang-format", ".clang-tidy"),
+    "rust": ("rustfmt.toml",),
+}
+
+_LANGUAGE_ASPECT_MARKERS = {
+    "python": "checks:python.bzl",
+    "cpp": "checks:cpp.bzl",
+    "rust": "checks:rust.bzl",
+}
+
+_REQUIRED_CLANG_TIDY_CHECKS = {
+    "bugprone-easily-swappable-parameters",
+    "bugprone-narrowing-conversions",
+    "bugprone-unchecked-optional-access",
+    "cppcoreguidelines-avoid-c-arrays",
+    "cppcoreguidelines-avoid-non-const-global-variables",
+    "cppcoreguidelines-narrowing-conversions",
+    "cppcoreguidelines-pro-bounds-array-to-pointer-decay",
+    "cppcoreguidelines-pro-bounds-pointer-arithmetic",
+    "cppcoreguidelines-special-member-functions",
+    "misc-include-cleaner",
+    "readability-function-cognitive-complexity",
+    "readability-implicit-bool-conversion",
+}
+
+_EXCLUDED_CLANG_TIDY_CHECKS = {
+    "clang-analyzer-optin.performance.GCDAntipattern",
+    "clang-analyzer-optin.performance.Padding",
+    "cppcoreguidelines-avoid-do-while",
+    "cppcoreguidelines-avoid-magic-numbers",
+    "cppcoreguidelines-macro-to-enum",
+    "cppcoreguidelines-non-private-member-variables-in-classes",
+    "cppcoreguidelines-owning-memory",
+    "cppcoreguidelines-pro-bounds-avoid-unchecked-container-access",
+    "cppcoreguidelines-pro-bounds-constant-array-index",
+    "google-readability-function-size",
+    "google-readability-todo",
+    "misc-no-recursion",
+    "misc-non-private-member-variables-in-classes",
+    "modernize-macro-to-enum",
+    "modernize-min-max-use-initializer-list",
+    "modernize-pass-by-value",
+    "modernize-raw-string-literal",
+    "modernize-return-braced-init-list",
+    "modernize-use-constraints",
+    "modernize-use-trailing-return-type",
+    "performance-enum-size",
+    "portability-restrict-system-includes",
+    "readability-convert-member-functions-to-static",
+    "readability-function-size",
+    "readability-identifier-length",
+    "readability-magic-numbers",
+    "readability-math-missing-parentheses",
+}
+
+_EXCLUDED_CLANG_TIDY_PREFIXES = (
+    "clang-analyzer-fuchsia.",
+    "clang-analyzer-optin.mpi.",
+    "clang-analyzer-optin.osx.",
+    "clang-analyzer-osx.",
+    "clang-analyzer-webkit.",
+    "google-objc-",
+)
+
+_CLANG_TIDY_CHECK_COUNT = 421
+
 
 def _fail(message: str, output: str = "") -> None:
     if output:
@@ -124,50 +213,80 @@ class Integration:
         """Create an unconfigured consumer from the example's project inputs."""
         workspace = Path(os.environ["TEST_TMPDIR"]) / "greenfield"
         workspace.mkdir()
-        module = (self.workspace / "MODULE.bazel").read_text(encoding="utf-8")
-        begin = "# ##BAZEL_DEVTOOLS_MANAGED_BEGIN:ide-dependencies##"
-        end = "# ##BAZEL_DEVTOOLS_MANAGED_END:ide-dependencies##"
-        prefix, found_begin, remainder = module.partition(begin)
-        _managed, found_end, suffix = remainder.partition(end)
-        if not found_begin or not found_end:
-            _fail("polyglot MODULE.bazel is missing its managed dependency block")
-        module = prefix.rstrip() + "\n" + suffix.lstrip("\n")
-        module = module.replace(
-            'path = "../.."',
-            f"path = {json.dumps(str(self.scratch_repo))}",
-        )
+        module = f"""\
+module(name = "bazel_devtools_python_greenfield")
+
+bazel_dep(name = "bazel_devtools", version = "0.1.0")
+local_path_override(
+    module_name = "bazel_devtools",
+    path = {json.dumps(str(self.scratch_repo))},
+)
+
+bazel_dep(name = "aspect_rules_py", version = "1.11.7")
+
+interpreters = use_extension(
+    "@aspect_rules_py//py/unstable:extension.bzl",
+    "python_interpreters",
+)
+interpreters.toolchain(
+    is_default = True,
+    python_version = "3.14",
+)
+use_repo(interpreters, "python_interpreters")
+register_toolchains("@python_interpreters//:all")
+"""
         (workspace / "MODULE.bazel").write_text(module, encoding="utf-8")
         shutil.copy2(self.workspace / ".bazelversion", workspace / ".bazelversion")
         shutil.copytree(self.workspace / "python", workspace / "python")
         return workspace
 
+    def prepare_language_workspace(self, language: str) -> Path:
+        """Create an unconfigured single-language consumer workspace."""
+        workspace = Path(os.environ["TEST_TMPDIR"]) / f"{language}-only"
+        workspace.mkdir()
+        module = f"""\
+module(name = "bazel_devtools_{language}_only")
+
+bazel_dep(name = "bazel_devtools", version = "0.1.0")
+local_path_override(
+    module_name = "bazel_devtools",
+    path = {json.dumps(str(self.scratch_repo))},
+)
+
+{_LANGUAGE_MODULE_EXTRAS[language]}"""
+        (workspace / "MODULE.bazel").write_text(module, encoding="utf-8")
+        shutil.copy2(self.workspace / ".bazelversion", workspace / ".bazelversion")
+        shutil.copytree(self.workspace / language, workspace / language)
+        return workspace
+
     def check_first_time_setup(self) -> None:
         """Exercise blocked brownfield adoption and clean greenfield setup."""
         workspace = self.prepare_greenfield()
-        clang_tidy = workspace / ".clang-tidy"
-        legacy_policy = "Checks: 'modernize-*'\n"
-        clang_tidy.write_text(legacy_policy, encoding="utf-8")
+        language_arguments = ["--language", "python"]
+        ruff = workspace / ".ruff.toml"
+        legacy_policy = "line-length = 88\n"
+        ruff.write_text(legacy_policy, encoding="utf-8")
 
         self.bazel_run(
-            ["run", "@bazel_devtools//tools:setup", "--", "plan"],
+            ["run", "@bazel_devtools//tools:setup", "--", "plan", *language_arguments],
             expect_success=False,
-            diagnostic="existing .clang-tidy",
+            diagnostic="existing .ruff.toml",
             workspace=workspace,
         )
         self.bazel_run(
-            ["run", "@bazel_devtools//tools:setup", "--", "init"],
+            ["run", "@bazel_devtools//tools:setup", "--", "init", *language_arguments],
             expect_success=False,
             diagnostic="brownfield adoption",
             workspace=workspace,
         )
-        if clang_tidy.read_text(encoding="utf-8") != legacy_policy:
+        if ruff.read_text(encoding="utf-8") != legacy_policy:
             _fail("blocked setup modified the existing brownfield policy")
         if (workspace / ".bazel_devtools/state.json").exists():
             _fail("blocked setup wrote installation state")
 
-        clang_tidy.unlink()
+        ruff.unlink()
         output = self.bazel_run(
-            ["run", "@bazel_devtools//tools:setup", "--", "plan"],
+            ["run", "@bazel_devtools//tools:setup", "--", "plan", *language_arguments],
             expect_success=True,
             diagnostic="would create .bazel_devtools/ruff.toml",
             workspace=workspace,
@@ -178,7 +297,7 @@ class Integration:
             _fail("setup plan modified the greenfield workspace", output)
 
         self.bazel_run(
-            ["run", "@bazel_devtools//tools:setup", "--", "init"],
+            ["run", "@bazel_devtools//tools:setup", "--", "init", *language_arguments],
             expect_success=True,
             workspace=workspace,
         )
@@ -187,7 +306,138 @@ class Integration:
             expect_success=True,
             workspace=workspace,
         )
+        state = _object(
+            _json(workspace / ".bazel_devtools/state.json"),
+            "greenfield setup state",
+        )
+        if state.get("languages") != ["python"]:
+            _fail("greenfield setup did not persist its Python-only selection")
+        unexpected = (".clang-format", ".clang-tidy", "rustfmt.toml")
+        if any((workspace / path).exists() for path in unexpected):
+            _fail("Python-only setup installed another language's policy")
+        aspects = (workspace / "tools/bazel_devtools/aspects.bzl").read_text(encoding="utf-8")
+        if "checks:cpp.bzl" in aspects or "checks:rust.bzl" in aspects:
+            _fail("Python-only setup loads another language's aspects")
+        tools_build = (workspace / "tools/bazel_devtools/BUILD.bazel").read_text(encoding="utf-8")
+        if "clang_format" in tools_build or "current_rustfmt_toolchain" in tools_build:
+            _fail("Python-only setup loads another language's formatter")
+        if "toolchains_llvm" in (workspace / "MODULE.bazel").read_text(encoding="utf-8"):
+            _fail("Python-only setup installed the LLVM toolchain")
         self.bazel_run(["test", "//..."], expect_success=True, workspace=workspace)
+
+        self.check_language_selection_changes(workspace)
+
+    def check_language_selection_changes(self, workspace: Path) -> None:
+        """Exercise adding and removing a configured language integration."""
+        self.bazel_run(
+            [
+                "run",
+                "@bazel_devtools//tools:setup",
+                "--",
+                "upgrade",
+                "--language",
+                "python",
+                "--language",
+                "cpp",
+            ],
+            expect_success=True,
+            workspace=workspace,
+        )
+        module = workspace / "MODULE.bazel"
+        if "toolchains_llvm" not in module.read_text(encoding="utf-8"):
+            _fail("adding C++ support did not install the LLVM toolchain")
+        self.bazel_run(
+            [
+                "run",
+                "@bazel_devtools//tools:setup",
+                "--",
+                "upgrade",
+                "--language",
+                "python",
+            ],
+            expect_success=True,
+            workspace=workspace,
+        )
+        if "toolchains_llvm" in module.read_text(encoding="utf-8"):
+            _fail("removing C++ support left the LLVM toolchain active")
+        self.bazel_run(
+            ["run", "@bazel_devtools//tools:setup", "--", "doctor"],
+            expect_success=True,
+            diagnostic="languages: python",
+            workspace=workspace,
+        )
+
+    def check_conditional_language_installations(self) -> None:
+        """Analyze and exercise generated C++-only and Rust-only consumers."""
+        for language in ("cpp", "rust"):
+            self.check_conditional_language_installation(language)
+
+    def check_conditional_language_installation(self, language: str) -> None:
+        """Exercise one generated single-language consumer."""
+        workspace = self.prepare_language_workspace(language)
+        self.bazel_run(
+            [
+                "run",
+                "@bazel_devtools//tools:setup",
+                "--",
+                "init",
+                "--language",
+                language,
+            ],
+            expect_success=True,
+            workspace=workspace,
+        )
+        self.bazel_run(
+            ["run", "@bazel_devtools//tools:setup", "--", "doctor"],
+            expect_success=True,
+            diagnostic=f"languages: {language}",
+            workspace=workspace,
+        )
+        self.check_conditional_language_files(workspace, language)
+
+        self.bazel_run(
+            ["build", "//tools/bazel_devtools:formatters"],
+            expect_success=True,
+            workspace=workspace,
+        )
+        self.bazel_run(
+            ["run", "//:format", "--", "--language", language, "//..."],
+            expect_success=True,
+            workspace=workspace,
+        )
+        self.bazel_run(["test", "//..."], expect_success=True, workspace=workspace)
+
+        diagnostic = "language support is not installed for: python"
+        self.bazel_run(
+            ["run", "//:format", "--", "--language", "python", "//..."],
+            expect_success=False,
+            diagnostic=diagnostic,
+            workspace=workspace,
+        )
+        self.bazel_run(
+            ["run", "//:ide-sync", "--", "--language", "python"],
+            expect_success=False,
+            diagnostic=diagnostic,
+            workspace=workspace,
+        )
+
+    def check_conditional_language_files(self, workspace: Path, language: str) -> None:
+        """Validate generated files and loads for one selected language."""
+        for candidate, paths in _LANGUAGE_POLICY_PATHS.items():
+            for relative in paths:
+                if (workspace / relative).exists() != (candidate == language):
+                    _fail(f"{language}-only setup produced an unexpected policy path: {relative}")
+
+        aspects = (workspace / "tools/bazel_devtools/aspects.bzl").read_text(encoding="utf-8")
+        for candidate, marker in _LANGUAGE_ASPECT_MARKERS.items():
+            if (marker in aspects) != (candidate == language):
+                _fail(f"{language}-only setup produced an unexpected aspect load: {marker}")
+
+        module = (workspace / "MODULE.bazel").read_text(encoding="utf-8")
+        if ("toolchains_llvm" in module) != (language == "cpp"):
+            _fail(f"{language}-only setup produced unexpected LLVM toolchain configuration")
+        if ("rust.toolchain" in module) != (language == "rust"):
+            _fail(f"{language}-only setup produced unexpected Rust toolchain configuration")
 
     def replace_and_reject(
         self,
@@ -286,6 +536,135 @@ class Integration:
                 for hidden, build in reversed(disabled):
                     hidden.rename(build)
 
+    def check_manual_test_contract(self) -> None:
+        """Prove wildcard tests check manual tests without executing them."""
+        self.replace_and_reject(
+            "python/manual_contract_test.py",
+            "e2e/testdata/violations/python/ruff_lint.py",
+            "//...",
+            "D100",
+        )
+
+    def check_cpp_style_policy(self) -> None:
+        """Exercise the managed member-naming and pointer-alignment policy."""
+        clang_tidy = "//tools/bazel_devtools:clang_tidy"
+        config = self.workspace / ".clang-tidy"
+        diagnostic_exclusions = [
+            line.strip().removesuffix(",")
+            for line in config.read_text(encoding="utf-8").splitlines()
+            if line.strip().startswith("-clang-diagnostic-")
+        ]
+        expected_diagnostic_exclusions = ["-clang-diagnostic-builtin-macro-redefined"]
+        if diagnostic_exclusions != expected_diagnostic_exclusions:
+            _fail(f"clang-diagnostic exclusions broadened unexpectedly: {diagnostic_exclusions}")
+        version = self.bazel_run(
+            ["run", clang_tidy, "--", "--version"],
+            expect_success=True,
+        )
+        if "LLVM version 22.1.6" not in version:
+            _fail("clang-tidy policy inventory ran with an unexpected LLVM version", version)
+
+        listed = self.bazel_run(
+            ["run", clang_tidy, "--", "--list-checks", f"--config-file={config}"],
+            expect_success=True,
+        )
+        actual_checks = {
+            line.strip()
+            for line in listed.splitlines()
+            if line.startswith("    ") and "-" in line and " " not in line.strip()
+        }
+        inventory_path = self.scratch_repo / "e2e/testdata/cpp/clang_tidy_checks_22_1_6.txt"
+        expected_checks = set(inventory_path.read_text(encoding="utf-8").splitlines())
+        if actual_checks != expected_checks:
+            added = sorted(actual_checks - expected_checks)
+            removed = sorted(expected_checks - actual_checks)
+            difference = f"added: {added}\nremoved: {removed}"
+            change = "LLVM 22.1.6 clang-tidy policy inventory changed"
+            instruction = "explicitly review and regenerate the snapshot"
+            _fail(
+                f"{change}; {instruction}\n{difference}",
+                listed,
+            )
+        actual_count = len(actual_checks)
+        if actual_count != _CLANG_TIDY_CHECK_COUNT:
+            expected_count = _CLANG_TIDY_CHECK_COUNT
+            _fail(f"expected {expected_count} resolved clang-tidy checks; found {actual_count}")
+
+        missing_required = sorted(_REQUIRED_CLANG_TIDY_CHECKS - actual_checks)
+        if missing_required:
+            _fail(f"strict clang-tidy checks are unexpectedly disabled: {missing_required}")
+        enabled_exclusions = sorted(_EXCLUDED_CLANG_TIDY_CHECKS & actual_checks)
+        enabled_exclusions.extend(
+            sorted(
+                check for check in actual_checks if check.startswith(_EXCLUDED_CLANG_TIDY_PREFIXES)
+            )
+        )
+        if enabled_exclusions:
+            _fail(f"excluded clang-tidy checks are unexpectedly enabled: {enabled_exclusions}")
+
+        check_arguments = [
+            "--checks=-*,readability-identifier-naming",
+            f"--config-file={config}",
+            "--",
+            "-std=c++20",
+        ]
+        bad_member = self.scratch_repo / "e2e/testdata/violations/cpp/member_naming.cc"
+        self.bazel_run(
+            ["run", clang_tidy, "--", str(bad_member), *check_arguments],
+            expect_success=False,
+            diagnostic="invalid case style for private member 'frame_count'",
+        )
+
+        good_members = self.scratch_repo / "e2e/testdata/cpp/member_naming_good.cc"
+        self.bazel_run(
+            ["run", clang_tidy, "--", str(good_members), *check_arguments],
+            expect_success=True,
+        )
+
+        included = self.scratch_repo / "e2e/testdata/violations/cpp/easily_swappable.cc"
+        self.bazel_run(
+            [
+                "run",
+                clang_tidy,
+                "--",
+                str(included),
+                f"--config-file={config}",
+                "--",
+                "-std=c++20",
+            ],
+            expect_success=False,
+            diagnostic="bugprone-easily-swappable-parameters",
+        )
+
+        excluded = self.scratch_repo / "e2e/testdata/cpp/excluded_policy_good.cc"
+        self.bazel_run(
+            [
+                "run",
+                clang_tidy,
+                "--",
+                str(excluded),
+                f"--config-file={config}",
+                "--",
+                "-std=c++20",
+            ],
+            expect_success=True,
+        )
+
+        pointer_fixture = self.scratch_repo / "e2e/testdata/cpp/pointer_format.cc"
+        formatted = self.bazel_run(
+            [
+                "run",
+                "//tools/bazel_devtools:clang_format",
+                "--",
+                f"--style=file:{self.workspace / '.clang-format'}",
+                str(pointer_fixture),
+            ],
+            expect_success=True,
+        )
+        expected = "void Consume(Type *value, const Type &reference);"
+        if expected not in formatted:
+            _fail("managed clang-format policy did not use right pointer alignment", formatted)
+
     def check_format_is_scratch_only(self) -> None:
         cases = {
             "python/greeting.py": "e2e/testdata/violations/python/format.py",
@@ -325,6 +704,7 @@ class Integration:
         if not {
             "python/greeting.py",
             "python/greeting_test.py",
+            "python/manual_contract_test.py",
         }.issubset(python_sources):
             _fail("pyrightconfig.json omits Bazel-owned Python sources")
         if "python/generated_unformatted.py" in python_sources:
@@ -413,6 +793,8 @@ class Integration:
             _fail("generated pre-commit configuration is missing its Bazel hook")
         if "bazel test //... --test_output=errors" not in workflow.read_text(encoding="utf-8"):
             _fail("generated GitHub workflow does not run the canonical presubmit")
+        if "branches:" in workflow.read_text(encoding="utf-8"):
+            _fail("generated GitHub workflow is unexpectedly limited to a named branch")
         actionlint = _runfile(os.environ["BAZEL_DEVTOOLS_ACTIONLINT"])
         actionlint_result = subprocess.run(
             [str(actionlint), str(workflow)],
@@ -461,6 +843,7 @@ exec {json.dumps(str(self.bazel))} --output_user_root={json.dumps(str(self.outpu
 
     def run(self) -> None:
         self.check_first_time_setup()
+        self.check_conditional_language_installations()
         self.bazel_run(
             ["run", "@bazel_devtools//tools:setup", "--", "init"],
             expect_success=True,
@@ -470,6 +853,14 @@ exec {json.dumps(str(self.bazel))} --output_user_root={json.dumps(str(self.outpu
             expect_success=True,
         )
         self.bazel_run(["test", "//..."], expect_success=True)
+        self.check_manual_test_contract()
+        self.check_cpp_style_policy()
+        self.replace_and_reject(
+            "cpp_transition/configured.c",
+            "e2e/testdata/violations/cpp/implicit_bool_conversion.c",
+            "//cpp_transition:configured_entry",
+            "readability-implicit-bool-conversion",
+        )
 
         failures = (
             (
@@ -500,7 +891,7 @@ exec {json.dumps(str(self.bazel))} --output_user_root={json.dumps(str(self.outpu
                 "cpp/greeting.cc",
                 "e2e/testdata/violations/cpp/clang_tidy.cc",
                 "//cpp:greeting",
-                "modernize-use-trailing-return-type",
+                "modernize-use-nullptr",
             ),
             (
                 "rust/greeting.rs",

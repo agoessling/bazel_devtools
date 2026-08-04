@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
+
+from tools.languages import SUPPORTED_LANGUAGES, normalize_languages
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 BAZEL_DEVTOOLS_VERSION = "0.1.0"
 
@@ -93,7 +99,7 @@ bazel_devtools_llvm = use_extension(
 )
 bazel_devtools_llvm.toolchain(
     name = "bazel_devtools_llvm_toolchain",
-    llvm_version = "20.1.8",
+    llvm_version = "22.1.6",
 )
 use_repo(
     bazel_devtools_llvm,
@@ -104,25 +110,98 @@ use_repo(
 
 
 CLANG_FORMAT_POLICY = """\
-BasedOnStyle: LLVM
-IndentWidth: 4
-ContinuationIndentWidth: 4
+BasedOnStyle: Google
 ColumnLimit: 100
+DerivePointerAlignment: false
+PointerAlignment: Right
 """
 
 
 CLANG_TIDY_POLICY = """\
-# Start from every check, then exclude platform/runtime policies that do not
-# describe ordinary portable C++ and diagnostics that depend on sandbox paths.
+# Begin with no checks, enable the reviewed general-purpose families, then
+# remove their documented platform, API-design, and high-noise diagnostics.
+# clang-diagnostic-* surfaces only diagnostics enabled by the compile flags.
+# Bazel's host C++ toolchain intentionally redefines __DATE__, __TIME__, and
+# __TIMESTAMP__ to deterministic values, so that one non-source diagnostic is
+# excluded without suppressing any other compiler warning.
+# Analyzer exclusions remove unsupported platform/domain checks and ABI-padding
+# policy. C++/Google/misc exclusions remove subjective architecture, field,
+# function-size, TODO, recursion, and magic-number policy. Unchecked-container
+# access is excluded because LLVM 22 flags ordinary indexed access even when
+# size invariants are established, while C++20 span has no at() alternative.
+# Modernize/readability exclusions avoid API or expression-style rewrites. In particular,
+# readability-math-missing-parentheses requires redundant parentheses around
+# conventional mathematical precedence, making expressions noisier without
+# identifying a defect. Performance/portability exclusions avoid enum-layout
+# and system-header deployment policy.
+# Paired aliases are excluded under every selected family that registers them.
 Checks: >-
-  *,
-  -fuchsia-*,
-  -llvmlibc-*,
-  -zircon-*,
-  -llvm-header-guard,
-  -clang-diagnostic-builtin-macro-redefined
+  -*,
+  clang-diagnostic-*,
+  clang-analyzer-*,
+  bugprone-*,
+  cert-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  google-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+
+  -clang-diagnostic-builtin-macro-redefined,
+
+  -clang-analyzer-fuchsia.*,
+  -clang-analyzer-optin.mpi.*,
+  -clang-analyzer-optin.osx.*,
+  -clang-analyzer-optin.performance.GCDAntipattern,
+  -clang-analyzer-optin.performance.Padding,
+  -clang-analyzer-osx.*,
+  -clang-analyzer-webkit.*,
+
+  -cppcoreguidelines-avoid-do-while,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-macro-to-enum,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+
+  -google-objc-*,
+  -google-readability-function-size,
+  -google-readability-todo,
+
+  -misc-no-recursion,
+  -misc-non-private-member-variables-in-classes,
+
+  -modernize-macro-to-enum,
+  -modernize-min-max-use-initializer-list,
+  -modernize-pass-by-value,
+  -modernize-raw-string-literal,
+  -modernize-return-braced-init-list,
+  -modernize-use-constraints,
+  -modernize-use-trailing-return-type,
+
+  -performance-enum-size,
+  -portability-restrict-system-includes,
+
+  -readability-convert-member-functions-to-static,
+  -readability-function-size,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-math-missing-parentheses
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
+CheckOptions:
+  # LLVM classifies static const/constexpr members as ClassConstant, so
+  # these access-specific categories enforce state suffixes without changing
+  # valid Google constants such as `static constexpr int kFrameRate`.
+  readability-identifier-naming.PrivateMemberCase: lower_case
+  readability-identifier-naming.PrivateMemberSuffix: '_'
+  readability-identifier-naming.ProtectedMemberCase: lower_case
+  readability-identifier-naming.ProtectedMemberSuffix: '_'
+  readability-identifier-naming.PublicMemberCase: lower_case
 """
 
 
@@ -140,38 +219,49 @@ try-import %workspace%/.bazelrc.bazel_devtools
 CLIPPY_STRICT_FLAGS = "-Dwarnings,-Dclippy::all,-Dclippy::pedantic,-Dclippy::nursery"
 
 
-BAZELRC_DEVTOOLS_BLOCK = f"""\
-# Do not synthesize empty __init__.py files in Python runfiles trees.
-common --incompatible_default_to_explicit_init_py
+def _bazelrc_devtools_block(languages: tuple[str, ...]) -> str:
+    lines = [
+        "# Do not synthesize empty __init__.py files in Python runfiles trees.",
+        "common --incompatible_default_to_explicit_init_py",
+        "",
+        "# Compile and check manual tests selected by wildcard target patterns, but do",
+        "# not execute them. Manual non-test targets retain Bazel's normal exclusion.",
+        "build --build_manual_tests",
+        "",
+        "# Apply checks to every target requested by `bazel test`.",
+    ]
+    aspects = {
+        "python": ("ruff", "basedpyright", "ruff_format"),
+        "cpp": ("clang_tidy", "clang_format"),
+        "rust": ("rustfmt", "clippy"),
+    }
+    for language in languages:
+        lines.extend(
+            f"test --aspects=//tools/bazel_devtools:aspects.bzl%{aspect}"
+            for aspect in aspects[language]
+        )
+    if "python" in languages or "cpp" in languages:
+        lines.append("test --@@aspect_rules_lint+//lint:fail_on_violation")
+    if "rust" in languages:
+        lines.extend(
+            (
+                "test --@@rules_rust+//rust/settings:rustfmt.toml=//:rustfmt.toml",
+                f"test --@@rules_rust+//rust/settings:clippy_flags={CLIPPY_STRICT_FLAGS}",
+                "test --output_groups=+rustfmt_checks,+clippy_checks",
+            )
+        )
+    return "\n".join(lines) + "\n"
 
-# Apply checks to every target requested by `bazel test`.
-test --aspects=//tools/bazel_devtools:aspects.bzl%ruff
-test --aspects=//tools/bazel_devtools:aspects.bzl%basedpyright
-test --aspects=//tools/bazel_devtools:aspects.bzl%ruff_format
-test --aspects=//tools/bazel_devtools:aspects.bzl%clang_tidy
-test --aspects=//tools/bazel_devtools:aspects.bzl%clang_format
-test --aspects=//tools/bazel_devtools:aspects.bzl%rustfmt
-test --aspects=//tools/bazel_devtools:aspects.bzl%clippy
-test --@@aspect_rules_lint+//lint:fail_on_violation
-test --@@rules_rust+//rust/settings:rustfmt.toml=//:rustfmt.toml
-test --@@rules_rust+//rust/settings:clippy_flags={CLIPPY_STRICT_FLAGS}
-test --output_groups=+rustfmt_checks,+clippy_checks
-"""
 
-
-ASPECTS_BZL = """\
+_PYTHON_ASPECTS = """\
 load(
-    "@bazel_devtools//checks:defs.bzl",
+    "@bazel_devtools//checks:python.bzl",
     "basedpyright_aspect",
-    "clang_format_aspect",
-    "lint_clang_tidy_aspect",
-    "lint_ruff_aspect",
     "ruff_format_aspect",
-    "rust_clippy_aspect",
-    "rustfmt_aspect",
+    "ruff_lint_aspect",
 )
 
-ruff = lint_ruff_aspect(
+ruff = ruff_lint_aspect(
     binary = Label("@bazel_devtools//tools:ruff"),
     configs = [
         Label("//:.ruff.toml"),
@@ -192,6 +282,15 @@ ruff_format = ruff_format_aspect(
         Label("//:.bazel_devtools/ruff.toml"),
     ],
 )
+"""
+
+
+_CPP_ASPECTS = """\
+load(
+    "@bazel_devtools//checks:cpp.bzl",
+    "clang_format_aspect",
+    "lint_clang_tidy_aspect",
+)
 
 clang_tidy = lint_clang_tidy_aspect(
     binary = Label("//tools/bazel_devtools:clang_tidy"),
@@ -203,17 +302,47 @@ clang_format = clang_format_aspect(
     binary = Label("//tools/bazel_devtools:clang_format"),
     config = Label("//:.clang-format"),
 )
+"""
+
+
+_RUST_ASPECTS = """\
+load(
+    "@bazel_devtools//checks:rust.bzl",
+    "rust_clippy_aspect",
+    "rustfmt_aspect",
+)
 
 rustfmt = rustfmt_aspect
 clippy = rust_clippy_aspect
 """
 
 
-TOOLS_BUILD = """\
-load("@bazel_devtools//tools:defs.bzl", "bazel_devtools_formatters", "tool_binary")
+def _aspects_bzl(languages: tuple[str, ...]) -> str:
+    content = {
+        "python": _PYTHON_ASPECTS,
+        "cpp": _CPP_ASPECTS,
+        "rust": _RUST_ASPECTS,
+    }
+    loads: list[str] = []
+    definitions: list[str] = []
+    for language in languages:
+        load, separator, definition = content[language].partition("\n\n")
+        if not separator:
+            msg = f"language aspect template for {language} has no load separator"
+            raise ValueError(msg)
+        loads.append(load)
+        definitions.append(definition.rstrip())
+    return "\n\n".join((*loads, *definitions)) + "\n"
 
-package(default_visibility = ["//visibility:public"])
 
+def _tools_build(languages: tuple[str, ...]) -> str:
+    parts = [
+        'load("@bazel_devtools//tools:defs.bzl", "bazel_devtools_formatters", "tool_binary")',
+        'package(default_visibility = ["//visibility:public"])',
+    ]
+    if "cpp" in languages:
+        parts.append(
+            """\
 tool_binary(
     name = "clang_format",
     src = "@bazel_devtools_llvm_toolchain_llvm//:bin/clang-format",
@@ -222,26 +351,44 @@ tool_binary(
 tool_binary(
     name = "clang_tidy",
     src = "@bazel_devtools_llvm_toolchain_llvm//:bin/clang-tidy",
-)
-
+)"""
+        )
+    language_lines = "\n".join(f'        "{language}",' for language in languages)
+    arguments = f"    languages = [\n{language_lines}\n    ],"
+    if "cpp" in languages:
+        arguments += '\n    clang_format = ":clang_format",'
+    parts.append(
+        f"""\
 bazel_devtools_formatters(
     name = "formatters",
-    clang_format = ":clang_format",
-)
-"""
+{arguments}
+)"""
+    )
+    return "\n\n".join(parts) + "\n"
 
 
-ROOT_BUILD_BLOCK = """\
+def _root_build_block(languages: tuple[str, ...]) -> str:
+    exported = [
+        ".github/workflows/bazel-devtools.yml",
+        ".pre-commit-config.yaml",
+    ]
+    if "python" in languages:
+        exported.extend(
+            (
+                ".bazel_devtools/basedpyright.json",
+                ".bazel_devtools/ruff.toml",
+                ".ruff.toml",
+                "basedpyright.json",
+            )
+        )
+    if "cpp" in languages:
+        exported.extend((".clang-format", ".clang-tidy"))
+    if "rust" in languages:
+        exported.append("rustfmt.toml")
+    export_lines = "\n".join(f'    "{path}",' for path in sorted(exported))
+    return f"""\
 exports_files([
-    ".bazel_devtools/basedpyright.json",
-    ".bazel_devtools/ruff.toml",
-    ".github/workflows/bazel-devtools.yml",
-    ".pre-commit-config.yaml",
-    ".clang-format",
-    ".clang-tidy",
-    ".ruff.toml",
-    "basedpyright.json",
-    "rustfmt.toml",
+{export_lines}
 ])
 
 alias(
@@ -324,7 +471,6 @@ name: Bazel presubmit
 on:
   pull_request:
   push:
-    branches: [master]
 
 permissions:
   contents: read
@@ -352,50 +498,102 @@ jobs:
 """
 
 
-TEMPLATES = (
-    Template(".bazel_devtools/ruff.toml", RUFF_POLICY, Ownership.MANAGED_FILE),
-    Template(
-        ".bazel_devtools/basedpyright.json",
-        BASEDPYRIGHT_POLICY,
-        Ownership.MANAGED_FILE,
-    ),
-    Template(".ruff.toml", RUFF_USER_CONFIG, Ownership.CREATE_ONLY),
-    Template("basedpyright.json", BASEDPYRIGHT_USER_CONFIG, Ownership.CREATE_ONLY),
-    Template("pyrightconfig.json", PYRIGHT_EDITOR_CONFIG, Ownership.CREATE_ONLY),
-    Template(
-        ".clang-format",
-        CLANG_FORMAT_POLICY,
-        Ownership.MANAGED_BLOCK,
-        "clang-format-policy",
-    ),
-    Template(".clang-tidy", CLANG_TIDY_POLICY, Ownership.MANAGED_BLOCK, "clang-tidy-policy"),
-    Template("rustfmt.toml", RUSTFMT_POLICY, Ownership.MANAGED_BLOCK, "rustfmt-policy"),
-    Template("MODULE.bazel", MODULE_BLOCK, Ownership.MANAGED_BLOCK, "ide-dependencies"),
-    Template(".bazelrc", BAZELRC_IMPORT_BLOCK, Ownership.MANAGED_BLOCK, "bazelrc-import"),
-    Template(".gitignore", GITIGNORE_BLOCK, Ownership.MANAGED_BLOCK, "generated-ide-files"),
-    Template(
-        ".bazelrc.bazel_devtools",
-        BAZELRC_DEVTOOLS_BLOCK,
-        Ownership.MANAGED_BLOCK,
-        "checks",
-    ),
-    Template(".pre-commit-config.yaml", PRE_COMMIT_CONFIG, Ownership.MANAGED_FILE),
-    Template(
-        ".github/workflows/bazel-devtools.yml",
-        GITHUB_WORKFLOW,
-        Ownership.MANAGED_FILE,
-    ),
-    Template(
-        "tools/bazel_devtools/aspects.bzl",
-        ASPECTS_BZL,
-        Ownership.MANAGED_BLOCK,
-        "aspects",
-    ),
-    Template(
-        "tools/bazel_devtools/BUILD.bazel",
-        TOOLS_BUILD,
-        Ownership.MANAGED_BLOCK,
-        "tools",
-    ),
-    Template("BUILD.bazel", ROOT_BUILD_BLOCK, Ownership.MANAGED_BLOCK, "root-aliases"),
-)
+def templates_for_languages(languages: Iterable[str]) -> tuple[Template, ...]:
+    """Build the installable template set for the selected languages."""
+    selected = normalize_languages(languages)
+    templates: list[Template] = []
+    if "python" in selected:
+        templates.extend(
+            (
+                Template(".bazel_devtools/ruff.toml", RUFF_POLICY, Ownership.MANAGED_FILE),
+                Template(
+                    ".bazel_devtools/basedpyright.json",
+                    BASEDPYRIGHT_POLICY,
+                    Ownership.MANAGED_FILE,
+                ),
+                Template(".ruff.toml", RUFF_USER_CONFIG, Ownership.CREATE_ONLY),
+                Template("basedpyright.json", BASEDPYRIGHT_USER_CONFIG, Ownership.CREATE_ONLY),
+                Template("pyrightconfig.json", PYRIGHT_EDITOR_CONFIG, Ownership.CREATE_ONLY),
+            )
+        )
+    if "cpp" in selected:
+        templates.extend(
+            (
+                Template(
+                    ".clang-format",
+                    CLANG_FORMAT_POLICY,
+                    Ownership.MANAGED_BLOCK,
+                    "clang-format-policy",
+                ),
+                Template(
+                    ".clang-tidy",
+                    CLANG_TIDY_POLICY,
+                    Ownership.MANAGED_BLOCK,
+                    "clang-tidy-policy",
+                ),
+            )
+        )
+    if "rust" in selected:
+        templates.append(
+            Template(
+                "rustfmt.toml",
+                RUSTFMT_POLICY,
+                Ownership.MANAGED_BLOCK,
+                "rustfmt-policy",
+            )
+        )
+    templates.extend(
+        (
+            Template(
+                "MODULE.bazel",
+                MODULE_BLOCK if "cpp" in selected else "",
+                Ownership.MANAGED_BLOCK,
+                "ide-dependencies",
+            ),
+            Template(".bazelrc", BAZELRC_IMPORT_BLOCK, Ownership.MANAGED_BLOCK, "bazelrc-import"),
+            Template(
+                ".gitignore",
+                GITIGNORE_BLOCK,
+                Ownership.MANAGED_BLOCK,
+                "generated-ide-files",
+            ),
+            Template(
+                ".bazelrc.bazel_devtools",
+                _bazelrc_devtools_block(selected),
+                Ownership.MANAGED_BLOCK,
+                "checks",
+            ),
+            Template(".pre-commit-config.yaml", PRE_COMMIT_CONFIG, Ownership.MANAGED_FILE),
+            Template(
+                ".github/workflows/bazel-devtools.yml",
+                GITHUB_WORKFLOW,
+                Ownership.MANAGED_FILE,
+            ),
+            Template(
+                "tools/bazel_devtools/aspects.bzl",
+                _aspects_bzl(selected),
+                Ownership.MANAGED_BLOCK,
+                "aspects",
+            ),
+            Template(
+                "tools/bazel_devtools/BUILD.bazel",
+                _tools_build(selected),
+                Ownership.MANAGED_BLOCK,
+                "tools",
+            ),
+            Template(
+                "BUILD.bazel",
+                _root_build_block(selected),
+                Ownership.MANAGED_BLOCK,
+                "root-aliases",
+            ),
+        )
+    )
+    return tuple(templates)
+
+
+BAZELRC_DEVTOOLS_BLOCK = _bazelrc_devtools_block(SUPPORTED_LANGUAGES)
+ASPECTS_BZL = _aspects_bzl(SUPPORTED_LANGUAGES)
+TOOLS_BUILD = _tools_build(SUPPORTED_LANGUAGES)
+ROOT_BUILD_BLOCK = _root_build_block(SUPPORTED_LANGUAGES)
+TEMPLATES = templates_for_languages(SUPPORTED_LANGUAGES)

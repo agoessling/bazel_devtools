@@ -20,6 +20,7 @@ from tools.bazel_support import (
     run_bazel,
 )
 from tools.bazel_wrapper import write_bazel_wrapper
+from tools.language_support import configured_languages
 
 PY_TARGETS = 'kind("py_(library|binary|test) rule", //...) except attr("tags", "no-ide", //...)'
 PY_MATERIALIZATION_TARGETS = (
@@ -180,9 +181,17 @@ def main() -> int:
         help="sync only selected languages (repeatable)",
     )
     args = parser.parse_args()
-    languages = cast("list[str] | None", args.language)
-    selected = set(languages or ())
     workspace = bazel_workspace()
+    languages = cast("list[str] | None", args.language)
+    configured = set(configured_languages(workspace))
+    selected = set(languages) if languages else configured
+    unavailable = sorted(selected - configured)
+    if unavailable:
+        print(
+            "language support is not installed for: " + ", ".join(unavailable),
+            file=sys.stderr,
+        )
+        return 1
     operations = (
         ("python", "py_(library|binary|test) rule", _sync_python),
         ("cpp", "cc_(library|binary|test) rule", _sync_cpp),
@@ -190,13 +199,13 @@ def main() -> int:
     )
     try:
         for language, kinds, operation in operations:
-            if selected and language not in selected:
+            if language not in selected:
                 continue
             if _has_targets(workspace, kinds):
                 operation(workspace)
             else:
                 print(f"skipped {language}: no matching Bazel targets")
-    except RuntimeError as error:
+    except (RuntimeError, TypeError) as error:
         print(error, file=sys.stderr)
         return 1
     return 0

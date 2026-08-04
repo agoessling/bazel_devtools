@@ -10,6 +10,12 @@ local_path_override(
 )
 
 bazel_dep(name = "aspect_rules_py", version = "1.11.7")
+bazel_dep(name = "external_cpp_fixture", version = "0.0.0")
+local_path_override(
+    module_name = "external_cpp_fixture",
+    path = "external_cpp_fixture",
+)
+bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_cc", version = "0.2.22")
 bazel_dep(name = "rules_rust", version = "0.73.0")
 
@@ -48,7 +54,7 @@ bazel_devtools_llvm = use_extension(
 )
 bazel_devtools_llvm.toolchain(
     name = "bazel_devtools_llvm_toolchain",
-    llvm_version = "20.1.8",
+    llvm_version = "22.1.6",
 )
 use_repo(
     bazel_devtools_llvm,

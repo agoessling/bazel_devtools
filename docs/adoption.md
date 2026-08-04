@@ -33,7 +33,7 @@ released version in `bazel_dep`.
 Run setup from a clean branch or worktree:
 
 ```sh
-bazel run @bazel_devtools//tools:setup -- plan
+bazel run @bazel_devtools//tools:setup -- plan --language python --language cpp
 ```
 
 The command does not write bazel_devtools configuration or state. A successful
@@ -42,10 +42,14 @@ An adoption issue is printed under `setup plan requires review` and exits with
 status 2. `setup init` performs the same preflight and refuses to make partial
 changes while those issues remain.
 
+Repeat `--language` to select any combination of `python`, `cpp`, and `rust`.
+Omitting it selects all three. Planning is read-only, so pass the same language
+arguments to `init` after reviewing the plan.
+
 After resolving the plan:
 
 ```sh
-bazel run @bazel_devtools//tools:setup -- init
+bazel run @bazel_devtools//tools:setup -- init --language python --language cpp
 bazel run @bazel_devtools//tools:setup -- doctor
 bazel test //...
 bazel run //:install-hooks
@@ -53,6 +57,14 @@ bazel run //:install-hooks
 
 Commit the installed configuration and `.bazel_devtools/state.json`.
 The hook installation is intentionally local Git state and is not committed.
+The language selection is committed in that state and reused by formatting,
+IDE synchronization, `doctor`, and later upgrades. Change it with `setup
+upgrade` plus the new complete set of repeated `--language` arguments.
+If upgrade reports a conflict, it keeps the previous selection and generated
+configuration active; resolve the reported patch and rerun the same command.
+Enabling a language also stops before writing if its policy or toolchain paths
+contain unmanaged declarations; reconcile them using the same migration rules
+as first-time setup, then rerun upgrade.
 
 ## Migrate existing policy
 
@@ -95,8 +107,9 @@ Repair formatting with `bazel run //:format`, inspect the changes, and retry
 the commit. `git commit --no-verify` remains the standard emergency bypass;
 the generated GitHub workflow still enforces the same command on pull requests.
 
-The workflow assumes `master` is the primary branch. Change its push filter if
-needed. Both presubmit files are managed as whole files because neither format
-has a native inheritance mechanism. Local edits are preserved; if a later
-bazel_devtools release also changes the template, `setup upgrade` emits a patch
-for explicit reconciliation.
+The workflow runs for pull requests and pushes to every branch, so setup does
+not need to guess the repository's primary branch. Both presubmit files are
+managed as whole files because neither format has a native inheritance
+mechanism. Local edits are preserved; if a later bazel_devtools release also
+changes the template, `setup upgrade` emits a patch for explicit
+reconciliation.

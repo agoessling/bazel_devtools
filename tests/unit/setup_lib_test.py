@@ -11,12 +11,13 @@ from tools.setup_lib import (
     append_block,
     doctor,
     initialize,
+    installed_languages,
     parse_blocks,
     plan_initialize,
     replace_block,
     upgrade,
 )
-from tools.templates import TEMPLATES, Ownership, Template
+from tools.templates import TEMPLATES, Ownership, Template, templates_for_languages
 
 
 class _BasedPyrightPolicy(TypedDict):
@@ -29,7 +30,9 @@ class _StateEntry(TypedDict):
 
 
 class _State(TypedDict):
+    schema_version: int
     installed_version: str | None
+    languages: list[str]
     entries: dict[str, _StateEntry]
 
 
@@ -133,8 +136,26 @@ class SetupLifecycleTest(unittest.TestCase):
         self.assertEqual("none", basedpyright["reportUnusedCallResult"])
         clang_tidy = (self.workspace / ".clang-tidy").read_text()
         self.assertIn("Checks: >-", clang_tidy)
-        self.assertIn("-fuchsia-*", clang_tidy)
-        self.assertIn("-llvm-header-guard", clang_tidy)
+        self.assertIn("  -*,", clang_tidy)
+        self.assertIn("  clang-analyzer-*,", clang_tidy)
+        self.assertIn("  bugprone-*,", clang_tidy)
+        self.assertIn("  -clang-analyzer-fuchsia.*,", clang_tidy)
+        self.assertIn("  -cppcoreguidelines-macro-to-enum,", clang_tidy)
+        self.assertIn(
+            "  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,",
+            clang_tidy,
+        )
+        self.assertIn("  -modernize-macro-to-enum,", clang_tidy)
+        self.assertIn("  -clang-diagnostic-builtin-macro-redefined,", clang_tidy)
+        self.assertIn("  -readability-math-missing-parentheses", clang_tidy)
+        self.assertIn("readability-identifier-naming.PrivateMemberSuffix: '_'", clang_tidy)
+        self.assertIn("readability-identifier-naming.ProtectedMemberSuffix: '_'", clang_tidy)
+        self.assertIn("readability-identifier-naming.PublicMemberCase: lower_case", clang_tidy)
+        clang_format = (self.workspace / ".clang-format").read_text()
+        self.assertIn("BasedOnStyle: Google", clang_format)
+        self.assertIn("ColumnLimit: 100", clang_format)
+        self.assertIn("DerivePointerAlignment: false", clang_format)
+        self.assertIn("PointerAlignment: Right", clang_format)
         self.assertIn(
             "##BAZEL_DEVTOOLS_MANAGED_BEGIN:checks##",
             (self.workspace / ".bazelrc.bazel_devtools").read_text(),
@@ -142,6 +163,14 @@ class SetupLifecycleTest(unittest.TestCase):
         self.assertIn(
             "common --incompatible_default_to_explicit_init_py",
             (self.workspace / ".bazelrc.bazel_devtools").read_text(),
+        )
+        self.assertIn(
+            "build --build_manual_tests",
+            (self.workspace / ".bazelrc.bazel_devtools").read_text(),
+        )
+        self.assertIn(
+            'llvm_version = "22.1.6"',
+            (self.workspace / "MODULE.bazel").read_text(),
         )
         self.assertIn(
             "-Dclippy::pedantic",
@@ -162,11 +191,188 @@ class SetupLifecycleTest(unittest.TestCase):
         workflow = (self.workspace / ".github/workflows/bazel-devtools.yml").read_text()
         self.assertIn("run: bazel test //... --test_output=errors", workflow)
         self.assertIn("persist-credentials: false", workflow)
+        self.assertNotIn("branches:", workflow)
         self.assertIn(
             'actual = "@bazel_devtools//tools:install-hooks"',
             (self.workspace / "BUILD.bazel").read_text(),
         )
         doctor(self.workspace)
+
+    def test_setup_installs_only_selected_language_integrations(self) -> None:
+        templates = templates_for_languages(("python", "cpp"))
+
+        initialize(self.workspace, templates, languages=("python", "cpp"))
+
+        state = _load_state(self.workspace / ".bazel_devtools/state.json")
+        self.assertEqual(["python", "cpp"], state["languages"])
+        self.assertFalse((self.workspace / "rustfmt.toml").exists())
+        aspects = (self.workspace / "tools/bazel_devtools/aspects.bzl").read_text()
+        self.assertIn("checks:python.bzl", aspects)
+        self.assertIn("checks:cpp.bzl", aspects)
+        self.assertNotIn("checks:rust.bzl", aspects)
+        tools_build = (self.workspace / "tools/bazel_devtools/BUILD.bazel").read_text()
+        self.assertNotIn("current_rustfmt_toolchain", tools_build)
+        self.assertIn('"python"', tools_build)
+        self.assertIn('"cpp"', tools_build)
+        doctor(self.workspace, templates)
+
+    def test_every_language_subset_renders_only_its_active_integrations(self) -> None:
+        selections = (
+            ("python",),
+            ("cpp",),
+            ("rust",),
+            ("python", "cpp"),
+            ("python", "rust"),
+            ("cpp", "rust"),
+            ("python", "cpp", "rust"),
+        )
+        aspect_markers = {
+            "python": "checks:python.bzl",
+            "cpp": "checks:cpp.bzl",
+            "rust": "checks:rust.bzl",
+        }
+        formatter_markers = {
+            "python": '"python"',
+            "cpp": '"cpp"',
+            "rust": '"rust"',
+        }
+
+        for selection in selections:
+            with self.subTest(selection=selection):
+                templates = templates_for_languages(selection)
+                by_path = {template.path: template for template in templates}
+                aspects = by_path["tools/bazel_devtools/aspects.bzl"].content
+                formatters = by_path["tools/bazel_devtools/BUILD.bazel"].content
+                for language, aspect_marker in aspect_markers.items():
+                    self.assertEqual(language in selection, aspect_marker in aspects)
+                    self.assertEqual(
+                        language in selection,
+                        formatter_markers[language] in formatters,
+                    )
+                module = by_path["MODULE.bazel"].content
+                self.assertEqual("cpp" in selection, "toolchains_llvm" in module)
+
+    def test_upgrade_changes_the_persisted_language_selection(self) -> None:
+        python_templates = templates_for_languages(("python",))
+        initialize(self.workspace, python_templates, languages=("python",))
+        self.assertNotIn("toolchains_llvm", (self.workspace / "MODULE.bazel").read_text())
+
+        expanded = templates_for_languages(("python", "cpp"))
+        result = upgrade(
+            self.workspace,
+            expanded,
+            languages=("python", "cpp"),
+        )
+
+        self.assertEqual([], result.conflicts)
+        self.assertIn("toolchains_llvm", (self.workspace / "MODULE.bazel").read_text())
+        state = _load_state(self.workspace / ".bazel_devtools/state.json")
+        self.assertEqual(["python", "cpp"], state["languages"])
+        doctor(self.workspace, expanded)
+
+    def test_upgrade_removes_deselected_cpp_from_the_active_graph(self) -> None:
+        initial = templates_for_languages(("python", "cpp"))
+        initialize(self.workspace, initial, languages=("python", "cpp"))
+
+        python_only = templates_for_languages(("python",))
+        result = upgrade(self.workspace, python_only, languages=("python",))
+
+        self.assertEqual([], result.conflicts)
+        self.assertNotIn("toolchains_llvm", (self.workspace / "MODULE.bazel").read_text())
+        self.assertTrue((self.workspace / ".clang-format").exists())
+        state = _load_state(self.workspace / ".bazel_devtools/state.json")
+        self.assertEqual(["python"], state["languages"])
+        self.assertNotIn(".clang-format", state["entries"])
+        self.assertIn("MODULE.bazel", state["entries"])
+        doctor(self.workspace, python_only)
+
+    def test_conflicted_language_change_leaves_selection_and_active_graph_unchanged(self) -> None:
+        initial = templates_for_languages(("python", "cpp"))
+        initialize(self.workspace, initial, languages=("python", "cpp"))
+        aspects = self.workspace / "tools/bazel_devtools/aspects.bzl"
+        aspects.write_text(
+            aspects.read_text().replace(
+                "ruff = ruff_lint_aspect(",
+                "local = True\n\nruff = ruff_lint_aspect(",
+            ),
+            encoding="utf-8",
+        )
+        module = self.workspace / "MODULE.bazel"
+        state_path = self.workspace / ".bazel_devtools/state.json"
+        module_before = module.read_bytes()
+        state_before = state_path.read_bytes()
+
+        result = upgrade(
+            self.workspace,
+            templates_for_languages(("python",)),
+            languages=("python",),
+        )
+
+        self.assertIn("tools/bazel_devtools/aspects.bzl:aspects", result.conflicts)
+        self.assertEqual(module_before, module.read_bytes())
+        self.assertEqual(state_before, state_path.read_bytes())
+        state = _load_state(state_path)
+        self.assertEqual(["python", "cpp"], state["languages"])
+        self.assertIn(".clang-format", state["entries"])
+        self.assertIn("language selection was not changed", "\n".join(result.messages))
+
+    def test_enabling_cpp_rejects_preexisting_policy_without_partial_writes(self) -> None:
+        python_only = templates_for_languages(("python",))
+        initialize(self.workspace, python_only, languages=("python",))
+        clang_tidy = self.workspace / ".clang-tidy"
+        clang_tidy.write_text("Checks: 'modernize-*'\n", encoding="utf-8")
+        module = self.workspace / "MODULE.bazel"
+        module_before = module.read_bytes()
+        state_path = self.workspace / ".bazel_devtools/state.json"
+        state_before = state_path.read_bytes()
+
+        with self.assertRaisesRegex(SetupError, "existing \\.clang-tidy"):
+            upgrade(
+                self.workspace,
+                templates_for_languages(("python", "cpp")),
+                languages=("python", "cpp"),
+            )
+
+        self.assertEqual("Checks: 'modernize-*'\n", clang_tidy.read_text())
+        self.assertEqual(module_before, module.read_bytes())
+        self.assertEqual(state_before, state_path.read_bytes())
+
+    def test_enabling_cpp_rejects_unmanaged_llvm_declarations(self) -> None:
+        python_only = templates_for_languages(("python",))
+        initialize(self.workspace, python_only, languages=("python",))
+        module = self.workspace / "MODULE.bazel"
+        module.write_text(
+            module.read_text() + '\nbazel_dep(name = "toolchains_llvm", version = "1.8.0")\n',
+            encoding="utf-8",
+        )
+        module_before = module.read_bytes()
+        state_path = self.workspace / ".bazel_devtools/state.json"
+        state_before = state_path.read_bytes()
+
+        with self.assertRaisesRegex(SetupError, "toolchains_llvm"):
+            upgrade(
+                self.workspace,
+                templates_for_languages(("python", "cpp")),
+                languages=("python", "cpp"),
+            )
+
+        self.assertEqual(module_before, module.read_bytes())
+        self.assertEqual(state_before, state_path.read_bytes())
+
+    def test_legacy_state_defaults_to_all_languages_and_migrates_on_upgrade(self) -> None:
+        initialize(self.workspace)
+        state_path = self.workspace / ".bazel_devtools/state.json"
+        state = _load_state(state_path)
+        state["schema_version"] = 1
+        state.pop("languages")
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        self.assertEqual(("python", "cpp", "rust"), installed_languages(self.workspace))
+        upgrade(self.workspace)
+
+        migrated = _load_state(state_path)
+        self.assertEqual(2, migrated["schema_version"])
+        self.assertEqual(["python", "cpp", "rust"], migrated["languages"])
 
     def test_plan_reports_init_without_modifying_the_workspace(self) -> None:
         snapshot = {
@@ -273,7 +479,7 @@ class SetupLifecycleTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        with self.assertRaisesRegex(SetupError, "presubmit adoption"):
+        with self.assertRaisesRegex(SetupError, "adoption changes"):
             upgrade(self.workspace)
 
         self.assertFalse((self.workspace / ".github/workflows/bazel-devtools.yml").exists())

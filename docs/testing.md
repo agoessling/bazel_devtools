@@ -20,12 +20,32 @@ re-downloading LLVM, Rust, Python, and Neovim archives on every run.
 The polyglot test proves:
 
 - a minimal unconfigured consumer can preview and complete first-time setup;
+- Python-only setup omits the C++ and Rust policy, aspects, formatters, and LLVM
+  module extension;
 - an existing brownfield policy blocks both plan and initialization without
   modifying the policy or writing setup state;
 - a clean repository passes plain `bazel test //...`;
+- manual tests are compiled and checked by that command but are not executed;
+- Ruff import sorting sees Bazel-owned `PyInfo` dependency sources as
+  first-party while continuing to lint only each target's direct sources;
+- the LLVM 22.1.6 clang-tidy version and exact resolved policy inventory match
+  the reviewed snapshot, required strict checks remain active,
+  and alias-effective exclusions remain absent;
+- representative enabled and excluded clang-tidy diagnostics behave according
+  to the managed family policy;
+- a C++ target using Bazel runfiles retains its target-local
+  `BAZEL_CURRENT_REPOSITORY` define through clang-tidy compilation-context
+  merging, including with a non-empty `implementation_deps` edge;
+- a host-incompatible C target reachable only through a custom transitioned
+  attribute is linted in its configured target platform while diagnostics from
+  an external header dependency remain outside the supported-source boundary;
 - each configured checker rejects its own diagnostic fixture;
 - target tags suppress only the intended checker;
-- Python-only, C++-only, and Rust-only target graphs still analyze;
+- independently generated C++-only and Rust-only scratch workspaces build their
+  selected formatter and pass plain `bazel test //...` without loading another
+  language's aspect, policy, or toolchain configuration;
+- format and IDE commands reject an explicitly requested language that was not
+  installed;
 - generated sources and non-target-owned files are not rewritten;
 - write-mode formatting repairs all three languages in the scratch copy;
 - editor metadata is valid and contains the expected target graph;

@@ -5,4 +5,4 @@
 
 auto Greeting(const std::string &name) -> std::string;
 
-#endif // BAZEL_DEVTOOLS_EXAMPLES_POLYGLOT_CPP_GREETING_H_
+#endif  // BAZEL_DEVTOOLS_EXAMPLES_POLYGLOT_CPP_GREETING_H_

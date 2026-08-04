@@ -1,5 +1,7 @@
 """A hermetic Ruff lint aspect over repository-owned Python sources."""
 
+load("@rules_python//python:defs.bzl", "PyInfo")
+
 _PYTHON_RULE_KINDS = ["py_binary", "py_library", "py_test"]
 _PYTHON_EXTENSIONS = ["py", "pyi"]
 
@@ -30,6 +32,18 @@ def _ruff_lint_impl(target, ctx):
     if not sources:
         return _empty_validation()
 
+    transitive_sources = depset()
+    if PyInfo in target:
+        # Ruff lints only direct sources below, but import sorting inspects the
+        # filesystem to distinguish first-party modules. Stage the Bazel-owned
+        # dependency graph so sandboxed classification matches the workspace.
+        transitive_sources = depset(
+            transitive = [
+                target[PyInfo].transitive_sources,
+                target[PyInfo].transitive_pyi_files,
+            ],
+        )
+
     marker = ctx.actions.declare_file(ctx.label.name + ".ruff.ok")
     args = ctx.actions.args()
     args.add(ctx.executable._binary)
@@ -49,7 +63,10 @@ shift 2
 touch "$marker"
 """,
         arguments = [args],
-        inputs = depset(sources + ctx.files._configs),
+        inputs = depset(
+            sources + ctx.files._configs,
+            transitive = [transitive_sources],
+        ),
         mnemonic = "RuffLint",
         outputs = [marker],
         progress_message = "Linting %{label} with Ruff",

@@ -35,12 +35,26 @@ py_library(
 )
 
 py_library(
+    name = "languages",
+    srcs = ["languages.py"],
+    imports = [".."],
+)
+
+py_library(
+    name = "language_support",
+    srcs = ["language_support.py"],
+    imports = [".."],
+    deps = [":languages"],
+)
+
+py_library(
     name = "setup_lib",
     srcs = [
         "setup_lib.py",
         "templates.py",
     ],
     imports = [".."],
+    deps = [":languages"],
 )
 
 py_binary(
@@ -48,7 +62,11 @@ py_binary(
     srcs = ["format_targets.py"],
     legacy_create_init = 0,
     main = "format_targets.py",
-    deps = [":bazel_support"],
+    deps = [
+        ":bazel_support",
+        ":language_support",
+        ":languages",
+    ],
 )
 
 py_binary(
@@ -59,6 +77,7 @@ py_binary(
     deps = [
         ":bazel_support",
         ":bazel_wrapper",
+        ":language_support",
     ],
 )
 

@@ -15,6 +15,11 @@ tool_binary(
 
 bazel_devtools_formatters(
     name = "formatters",
+    languages = [
+        "python",
+        "cpp",
+        "rust",
+    ],
     clang_format = ":clang_format",
 )
 # ##BAZEL_DEVTOOLS_MANAGED_END:tools##

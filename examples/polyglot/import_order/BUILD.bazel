@@ -1,0 +1,10 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "import_order_contract",
+    srcs = ["import_order_contract.py"],
+    deps = [
+        "//first_party_api",
+        "//third_party_api",
+    ],
+)
