@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SUPPORTED_LANGUAGES = ("python", "cpp", "rust")
+LEGACY_LANGUAGES = ("python", "cpp", "rust")
+SUPPORTED_LANGUAGES = (*LEGACY_LANGUAGES, "typescript")
 
 
 def normalize_languages(languages: Iterable[str]) -> tuple[str, ...]:

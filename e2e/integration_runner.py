@@ -25,6 +25,7 @@ rust.toolchain(
 use_repo(rust, "rust_toolchains")
 register_toolchains("@rust_toolchains//:all")
 """,
+    "typescript": "",
 }
 
 _LANGUAGE_POLICY_PATHS = {
@@ -37,12 +38,19 @@ _LANGUAGE_POLICY_PATHS = {
     ),
     "cpp": (".clang-format", ".clang-tidy"),
     "rust": ("rustfmt.toml",),
+    "typescript": (
+        ".bazel_devtools/biome.json",
+        ".bazel_devtools/tsconfig.json",
+        "biome.json",
+        "tsconfig.json",
+    ),
 }
 
 _LANGUAGE_ASPECT_MARKERS = {
     "python": "checks:python.bzl",
     "cpp": "checks:cpp.bzl",
     "rust": "checks:rust.bzl",
+    "typescript": "checks:typescript.bzl",
 }
 
 _REQUIRED_CLANG_TIDY_CHECKS = {
@@ -257,7 +265,48 @@ local_path_override(
         (workspace / "MODULE.bazel").write_text(module, encoding="utf-8")
         shutil.copy2(self.workspace / ".bazelversion", workspace / ".bazelversion")
         shutil.copytree(self.workspace / language, workspace / language)
+        if language == "typescript":
+            for relative in ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"):
+                shutil.copy2(self.workspace / relative, workspace / relative)
+            (workspace / "BUILD.bazel").write_text(
+                """\
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
+
+npm_link_all_packages(name = "node_modules")
+
+ts_config(
+    name = "tsconfig_base",
+    src = ".bazel_devtools/tsconfig.json",
+)
+
+ts_config(
+    name = "tsconfig",
+    src = "tsconfig.json",
+    deps = [":tsconfig_base"],
+    visibility = ["//visibility:public"],
+)
+""",
+                encoding="utf-8",
+            )
         return workspace
+
+    def enable_typescript_npm(self, workspace: Path) -> None:
+        """Add project-owned npm translation after setup provides rules_js."""
+        module = workspace / "MODULE.bazel"
+        module.write_text(
+            module.read_text(encoding="utf-8")
+            + """\
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
+npm.npm_translate_lock(
+    name = "npm",
+    pnpm_lock = "//:pnpm-lock.yaml",
+)
+use_repo(npm, "npm")
+""",
+            encoding="utf-8",
+        )
 
     def check_first_time_setup(self) -> None:
         """Exercise blocked brownfield adoption and clean greenfield setup."""
@@ -312,14 +361,25 @@ local_path_override(
         )
         if state.get("languages") != ["python"]:
             _fail("greenfield setup did not persist its Python-only selection")
-        unexpected = (".clang-format", ".clang-tidy", "rustfmt.toml")
+        unexpected = (
+            ".clang-format",
+            ".clang-tidy",
+            ".bazel_devtools/biome.json",
+            "rustfmt.toml",
+        )
         if any((workspace / path).exists() for path in unexpected):
             _fail("Python-only setup installed another language's policy")
         aspects = (workspace / "tools/bazel_devtools/aspects.bzl").read_text(encoding="utf-8")
-        if "checks:cpp.bzl" in aspects or "checks:rust.bzl" in aspects:
+        if any(
+            marker in aspects
+            for marker in ("checks:cpp.bzl", "checks:rust.bzl", "checks:typescript.bzl")
+        ):
             _fail("Python-only setup loads another language's aspects")
         tools_build = (workspace / "tools/bazel_devtools/BUILD.bazel").read_text(encoding="utf-8")
-        if "clang_format" in tools_build or "current_rustfmt_toolchain" in tools_build:
+        if any(
+            marker in tools_build
+            for marker in ("clang_format", "current_rustfmt_toolchain", "biome")
+        ):
             _fail("Python-only setup loads another language's formatter")
         if "toolchains_llvm" in (workspace / "MODULE.bazel").read_text(encoding="utf-8"):
             _fail("Python-only setup installed the LLVM toolchain")
@@ -368,8 +428,8 @@ local_path_override(
         )
 
     def check_conditional_language_installations(self) -> None:
-        """Analyze and exercise generated C++-only and Rust-only consumers."""
-        for language in ("cpp", "rust"):
+        """Analyze and exercise each generated non-Python consumer."""
+        for language in ("cpp", "rust", "typescript"):
             self.check_conditional_language_installation(language)
 
     def check_conditional_language_installation(self, language: str) -> None:
@@ -387,6 +447,8 @@ local_path_override(
             expect_success=True,
             workspace=workspace,
         )
+        if language == "typescript":
+            self.enable_typescript_npm(workspace)
         self.bazel_run(
             ["run", "@bazel_devtools//tools:setup", "--", "doctor"],
             expect_success=True,
@@ -438,6 +500,8 @@ local_path_override(
             _fail(f"{language}-only setup produced unexpected LLVM toolchain configuration")
         if ("rust.toolchain" in module) != (language == "rust"):
             _fail(f"{language}-only setup produced unexpected Rust toolchain configuration")
+        if ("aspect_rules_ts" in module) != (language == "typescript"):
+            _fail(f"{language}-only setup produced unexpected TypeScript rule configuration")
 
     def replace_and_reject(
         self,
@@ -460,12 +524,14 @@ local_path_override(
 
     def check_opt_out(self, language: str, fixture: str, tag: str = "no-format") -> None:
         package = self.workspace / language
-        source = package / (
-            "greeting.py"
-            if language == "python"
-            else "greeting.cc"
-            if language == "cpp"
-            else "greeting.rs"
+        source = (
+            package
+            / {
+                "cpp": "greeting.cc",
+                "python": "greeting.py",
+                "rust": "greeting.rs",
+                "typescript": "greeting.ts",
+            }[language]
         )
         build = package / "BUILD.bazel"
         original_source = source.read_bytes()
@@ -489,12 +555,14 @@ local_path_override(
 
     def check_write_format_opt_out(self, language: str, fixture: str, tag: str) -> None:
         package = self.workspace / language
-        source = package / (
-            "greeting.py"
-            if language == "python"
-            else "greeting.cc"
-            if language == "cpp"
-            else "greeting.rs"
+        source = (
+            package
+            / {
+                "cpp": "greeting.cc",
+                "python": "greeting.py",
+                "rust": "greeting.rs",
+                "typescript": "greeting.ts",
+            }[language]
         )
         build = package / "BUILD.bazel"
         original_source = source.read_bytes()
@@ -520,7 +588,7 @@ local_path_override(
     def check_language_isolation(self) -> None:
         builds = {
             language: self.workspace / language / "BUILD.bazel"
-            for language in ("python", "cpp", "rust")
+            for language in ("python", "cpp", "rust", "typescript")
         }
         for selected in builds:
             disabled: list[tuple[Path, Path]] = []
@@ -670,6 +738,7 @@ local_path_override(
             "python/greeting.py": "e2e/testdata/violations/python/format.py",
             "cpp/greeting.cc": "e2e/testdata/violations/cpp/format.cc",
             "rust/greeting.rs": "e2e/testdata/violations/rust/format.rs",
+            "typescript/greeting.ts": "e2e/testdata/violations/typescript/format.ts",
         }
         for destination, fixture in cases.items():
             (self.workspace / destination).write_bytes((self.scratch_repo / fixture).read_bytes())
@@ -720,6 +789,9 @@ local_path_override(
         rust_project = _object(_json(self.workspace / "rust-project.json"), "rust-project.json")
         if not _array(rust_project.get("crates"), "rust-project.json crates"):
             _fail("rust-project.json contains no crates")
+        tsconfig = _object(_json(self.workspace / "tsconfig.json"), "tsconfig.json")
+        if tsconfig.get("extends") != "./.bazel_devtools/tsconfig.json":
+            _fail("tsconfig.json does not extend the managed TypeScript baseline")
 
         nvim = _runfile(os.environ["BAZEL_DEVTOOLS_NVIM"])
         script = self.scratch_repo / "e2e/minimal_neovim_probe.lua"
@@ -905,6 +977,24 @@ exec {json.dumps(str(self.bazel))} --output_user_root={json.dumps(str(self.outpu
                 "//rust:greeting",
                 "is_empty",
             ),
+            (
+                "typescript/greeting.ts",
+                "e2e/testdata/violations/typescript/format.ts",
+                "//typescript:greeting_typecheck_test",
+                "format",
+            ),
+            (
+                "typescript/greeting.ts",
+                "e2e/testdata/violations/typescript/biome_lint.ts",
+                "//typescript:greeting_typecheck_test",
+                "Unexpected any",
+            ),
+            (
+                "typescript/greeting.ts",
+                "e2e/testdata/violations/typescript/type_error.ts",
+                "//typescript:greeting_typecheck_test",
+                "not assignable to type 'string'",
+            ),
         )
         for source, fixture, target, diagnostic in failures:
             self.replace_and_reject(source, fixture, target, diagnostic)
@@ -912,6 +1002,7 @@ exec {json.dumps(str(self.bazel))} --output_user_root={json.dumps(str(self.outpu
         self.check_opt_out("python", "e2e/testdata/violations/python/format.py")
         self.check_opt_out("cpp", "e2e/testdata/violations/cpp/format.cc")
         self.check_opt_out("rust", "e2e/testdata/violations/rust/format.rs")
+        self.check_opt_out("typescript", "e2e/testdata/violations/typescript/format.ts")
         self.check_opt_out("python", "e2e/testdata/violations/python/ruff_lint.py", "no-lint")
         self.check_opt_out(
             "python",
@@ -920,6 +1011,16 @@ exec {json.dumps(str(self.bazel))} --output_user_root={json.dumps(str(self.outpu
         )
         self.check_opt_out("cpp", "e2e/testdata/violations/cpp/clang_tidy.cc", "no-lint")
         self.check_opt_out("rust", "e2e/testdata/violations/rust/clippy.rs", "no-clippy")
+        self.check_opt_out(
+            "typescript",
+            "e2e/testdata/violations/typescript/biome_lint.ts",
+            "no-lint",
+        )
+        self.check_opt_out(
+            "typescript",
+            "e2e/testdata/violations/typescript/biome_lint.ts",
+            "no-biome-lint",
+        )
         self.check_write_format_opt_out(
             "python",
             "e2e/testdata/violations/python/format.py",
@@ -934,6 +1035,11 @@ exec {json.dumps(str(self.bazel))} --output_user_root={json.dumps(str(self.outpu
             "rust",
             "e2e/testdata/violations/rust/format.rs",
             "no-rustfmt",
+        )
+        self.check_write_format_opt_out(
+            "typescript",
+            "e2e/testdata/violations/typescript/format.ts",
+            "no-biome-format",
         )
         self.check_format_is_scratch_only()
         self.check_ide_metadata()

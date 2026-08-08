@@ -1,4 +1,5 @@
 /bazel-*
+/node_modules/
 /.bazel/
 /.pytest_cache/
 /.ruff_cache/

@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from itertools import combinations
 from pathlib import Path
 from typing import TypedDict, final, override
 
+from tools.languages import LEGACY_LANGUAGES, SUPPORTED_LANGUAGES
 from tools.setup_lib import (
     SetupError,
     append_block,
@@ -184,6 +186,17 @@ class SetupLifecycleTest(unittest.TestCase):
             'actual = "@bazel_devtools//tools:format"',
             (self.workspace / "BUILD.bazel").read_text(),
         )
+        biome = (self.workspace / ".bazel_devtools/biome.json").read_text()
+        self.assertIn('"recommended": true', biome)
+        self.assertIn('"lineWidth": 100', biome)
+        tsconfig = (self.workspace / ".bazel_devtools/tsconfig.json").read_text()
+        self.assertIn('"strict": true', tsconfig)
+        self.assertIn('"noUncheckedIndexedAccess": true', tsconfig)
+        self.assertIn('"jsx": "react-jsx"', tsconfig)
+        self.assertIn(
+            'bazel_dep(name = "aspect_rules_ts", version = "3.10.0")',
+            (self.workspace / "MODULE.bazel").read_text(),
+        )
         self.assertIn(
             "id: bazel-devtools-check",
             (self.workspace / ".pre-commit-config.yaml").read_text(),
@@ -210,6 +223,7 @@ class SetupLifecycleTest(unittest.TestCase):
         self.assertIn("checks:python.bzl", aspects)
         self.assertIn("checks:cpp.bzl", aspects)
         self.assertNotIn("checks:rust.bzl", aspects)
+        self.assertNotIn("checks:typescript.bzl", aspects)
         tools_build = (self.workspace / "tools/bazel_devtools/BUILD.bazel").read_text()
         self.assertNotIn("current_rustfmt_toolchain", tools_build)
         self.assertIn('"python"', tools_build)
@@ -217,24 +231,22 @@ class SetupLifecycleTest(unittest.TestCase):
         doctor(self.workspace, templates)
 
     def test_every_language_subset_renders_only_its_active_integrations(self) -> None:
-        selections = (
-            ("python",),
-            ("cpp",),
-            ("rust",),
-            ("python", "cpp"),
-            ("python", "rust"),
-            ("cpp", "rust"),
-            ("python", "cpp", "rust"),
+        selections = tuple(
+            selection
+            for count in range(1, len(SUPPORTED_LANGUAGES) + 1)
+            for selection in combinations(SUPPORTED_LANGUAGES, count)
         )
         aspect_markers = {
             "python": "checks:python.bzl",
             "cpp": "checks:cpp.bzl",
             "rust": "checks:rust.bzl",
+            "typescript": "checks:typescript.bzl",
         }
         formatter_markers = {
             "python": '"python"',
             "cpp": '"cpp"',
             "rust": '"rust"',
+            "typescript": '"typescript"',
         }
 
         for selection in selections:
@@ -251,6 +263,7 @@ class SetupLifecycleTest(unittest.TestCase):
                     )
                 module = by_path["MODULE.bazel"].content
                 self.assertEqual("cpp" in selection, "toolchains_llvm" in module)
+                self.assertEqual("typescript" in selection, "aspect_rules_ts" in module)
 
     def test_upgrade_changes_the_persisted_language_selection(self) -> None:
         python_templates = templates_for_languages(("python",))
@@ -367,12 +380,13 @@ class SetupLifecycleTest(unittest.TestCase):
         state.pop("languages")
         state_path.write_text(json.dumps(state), encoding="utf-8")
 
-        self.assertEqual(("python", "cpp", "rust"), installed_languages(self.workspace))
-        upgrade(self.workspace)
+        self.assertEqual(LEGACY_LANGUAGES, installed_languages(self.workspace))
+        legacy_templates = templates_for_languages(LEGACY_LANGUAGES)
+        upgrade(self.workspace, legacy_templates, languages=LEGACY_LANGUAGES)
 
         migrated = _load_state(state_path)
         self.assertEqual(2, migrated["schema_version"])
-        self.assertEqual(["python", "cpp", "rust"], migrated["languages"])
+        self.assertEqual(list(LEGACY_LANGUAGES), migrated["languages"])
 
     def test_plan_reports_init_without_modifying_the_workspace(self) -> None:
         snapshot = {
@@ -420,6 +434,15 @@ class SetupLifecycleTest(unittest.TestCase):
         self.assertTrue(any("pyproject.toml" in issue for issue in result.conflicts))
         self.assertTrue(any("ruff.toml" in issue for issue in result.conflicts))
         self.assertTrue(any("basedpyrightconfig.json" in issue for issue in result.conflicts))
+
+    def test_brownfield_typescript_policy_requires_managed_inheritance(self) -> None:
+        (self.workspace / "biome.json").write_text("{}\n", encoding="utf-8")
+        (self.workspace / "tsconfig.json").write_text("{}\n", encoding="utf-8")
+
+        result = plan_initialize(self.workspace)
+
+        self.assertTrue(any("Biome baseline" in issue for issue in result.conflicts))
+        self.assertTrue(any("TypeScript baseline" in issue for issue in result.conflicts))
 
     def test_brownfield_bazel_graph_collisions_require_explicit_migration(self) -> None:
         (self.workspace / "MODULE.bazel").write_text(

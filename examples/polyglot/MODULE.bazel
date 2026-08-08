@@ -15,6 +15,7 @@ local_path_override(
     module_name = "external_cpp_fixture",
     path = "external_cpp_fixture",
 )
+
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_cc", version = "0.2.22")
 bazel_dep(name = "rules_rust", version = "0.73.0")
@@ -28,6 +29,7 @@ interpreters.toolchain(
     python_version = "3.14",
 )
 use_repo(interpreters, "python_interpreters")
+
 register_toolchains("@python_interpreters//:all")
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
@@ -36,6 +38,7 @@ rust.toolchain(
     versions = ["1.89.0"],
 )
 use_repo(rust, "rust_toolchains")
+
 register_toolchains("@rust_toolchains//:all")
 
 # ##BAZEL_DEVTOOLS_MANAGED_BEGIN:ide-dependencies##
@@ -61,4 +64,21 @@ use_repo(
     "bazel_devtools_llvm_toolchain",
     "bazel_devtools_llvm_toolchain_llvm",
 )
+
+bazel_dep(name = "aspect_rules_js", version = "3.4.0")
+bazel_dep(name = "aspect_rules_ts", version = "3.10.0")
+
+bazel_devtools_rules_ts = use_extension(
+    "@aspect_rules_ts//ts:extensions.bzl",
+    "typescript",
+)
+bazel_devtools_rules_ts.deps(version = "5.9.3")
+use_repo(bazel_devtools_rules_ts, "npm_typescript")
 # ##BAZEL_DEVTOOLS_MANAGED_END:ide-dependencies##
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
+npm.npm_translate_lock(
+    name = "npm",
+    pnpm_lock = "//:pnpm-lock.yaml",
+)
+use_repo(npm, "npm")

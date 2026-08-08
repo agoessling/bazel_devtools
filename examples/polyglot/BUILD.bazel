@@ -1,16 +1,37 @@
 package(default_visibility = ["//visibility:public"])
 
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
+
+npm_link_all_packages(name = "node_modules")
+
+ts_config(
+    name = "tsconfig_base",
+    src = ".bazel_devtools/tsconfig.json",
+)
+
+ts_config(
+    name = "tsconfig",
+    src = "tsconfig.json",
+    deps = [":tsconfig_base"],
+    visibility = ["//visibility:public"],
+)
+
 # ##BAZEL_DEVTOOLS_MANAGED_BEGIN:root-aliases##
 exports_files([
     ".bazel_devtools/basedpyright.json",
+    ".bazel_devtools/biome.json",
     ".bazel_devtools/ruff.toml",
+    ".bazel_devtools/tsconfig.json",
     ".clang-format",
     ".clang-tidy",
     ".github/workflows/bazel-devtools.yml",
     ".pre-commit-config.yaml",
     ".ruff.toml",
     "basedpyright.json",
+    "biome.json",
     "rustfmt.toml",
+    "tsconfig.json",
 ])
 
 alias(

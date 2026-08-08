@@ -42,9 +42,9 @@ An adoption issue is printed under `setup plan requires review` and exits with
 status 2. `setup init` performs the same preflight and refuses to make partial
 changes while those issues remain.
 
-Repeat `--language` to select any combination of `python`, `cpp`, and `rust`.
-Omitting it selects all three. Planning is read-only, so pass the same language
-arguments to `init` after reviewing the plan.
+Repeat `--language` to select any combination of `python`, `cpp`, `rust`, and
+`typescript`. Omitting it selects all four. Planning is read-only, so pass the
+same language arguments to `init` after reviewing the plan.
 
 After resolving the plan:
 
@@ -77,14 +77,23 @@ existing policy:
   Pyright sections in `pyproject.toml` into `basedpyright.json`, retaining
   `"extends": ".bazel_devtools/basedpyright.json"`. `pyrightconfig.json` is
   generated editor metadata after adoption.
+- Make an existing `biome.json` extend
+  `./.bazel_devtools/biome.json`. If the repository uses `biome.jsonc`, choose
+  one root filename and consolidate the policy before setup so Biome has one
+  unambiguous configuration chain.
+- Make an existing `tsconfig.json` extend
+  `./.bazel_devtools/tsconfig.json`; project and package configs may then extend
+  the root config normally.
 - For an existing `.clang-format`, `.clang-tidy`, or `rustfmt.toml`, move the
   file aside, run setup, and merge intentional overrides into the generated
   managed block. Keep the original file available for review until the first
   clean test run.
 - Reconcile existing `toolchains_llvm` or `hedron_compile_commands` module
-  declarations with the generated `ide-dependencies` block. Also resolve root
-  targets named `format`, `ide-sync`, `install-hooks`, or `pre-commit`, and any
-  files already occupying `tools/bazel_devtools/`, before initialization.
+  declarations with the generated `ide-dependencies` block. Do the same for
+  existing `aspect_rules_js` or `aspect_rules_ts` declarations when enabling
+  TypeScript. Also resolve root targets named `format`, `ide-sync`,
+  `install-hooks`, or `pre-commit`, and any files already occupying
+  `tools/bazel_devtools/`, before initialization.
 - If `.pre-commit-config.yaml` already exists, merge the generated local hook
   with id `bazel-devtools-check`. Setup then preserves the whole file as a
   local override. If `.github/workflows/bazel-devtools.yml` already exists,
@@ -97,6 +106,19 @@ existing policy:
 
 Rerun `setup plan` after migration. It is safe only when each checker has one
 unambiguous effective policy.
+
+## Add a TypeScript or React target
+
+The `typescript` integration pins `rules_js`, `rules_ts`, TypeScript, and Biome.
+It deliberately does not generate application dependencies. Keep the
+repository's `package.json`, `pnpm-lock.yaml`, and npm translation under normal
+application ownership, then point a `ts_project` at a `ts_config` which extends
+the generated root `tsconfig.json`. The checked-in
+`examples/polyglot/typescript` package is the executable React/TSX reference.
+
+This split keeps framework upgrades independent of tooling-policy upgrades:
+setup can update strict checks without selecting a React version or replacing
+the application's package-manager lockfile.
 
 ## Presubmit behavior
 

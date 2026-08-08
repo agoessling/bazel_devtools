@@ -20,7 +20,7 @@ re-downloading LLVM, Rust, Python, and Neovim archives on every run.
 The polyglot test proves:
 
 - a minimal unconfigured consumer can preview and complete first-time setup;
-- Python-only setup omits the C++ and Rust policy, aspects, formatters, and LLVM
+- Python-only setup omits the C++, Rust, and TypeScript policy, aspects, formatters, and LLVM
   module extension;
 - an existing brownfield policy blocks both plan and initialization without
   modifying the policy or writing setup state;
@@ -41,15 +41,15 @@ The polyglot test proves:
   an external header dependency remain outside the supported-source boundary;
 - each configured checker rejects its own diagnostic fixture;
 - target tags suppress only the intended checker;
-- independently generated C++-only and Rust-only scratch workspaces build their
+- independently generated C++-, Rust-, and TypeScript-only scratch workspaces build their
   selected formatter and pass plain `bazel test //...` without loading another
   language's aspect, policy, or toolchain configuration;
 - format and IDE commands reject an explicitly requested language that was not
   installed;
 - generated sources and non-target-owned files are not rewritten;
-- write-mode formatting repairs all three languages in the scratch copy;
+- write-mode formatting repairs all four languages in the scratch copy;
 - editor metadata is valid and contains the expected target graph;
-- a pinned minimal Neovim can resolve all three project roots;
+- a pinned minimal Neovim can resolve all four project roots;
 - generated pre-commit and GitHub configurations validate with their pinned
   tools;
 - explicit hook installation is executable and a clean staged tree passes;

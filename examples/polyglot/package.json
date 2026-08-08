@@ -1,0 +1,11 @@
+{
+  "name": "bazel-devtools-polyglot-example",
+  "private": true,
+  "packageManager": "pnpm@10.28.2",
+  "dependencies": {
+    "react": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18"
+  }
+}

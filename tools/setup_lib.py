@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from tools.languages import SUPPORTED_LANGUAGES, normalize_languages
+from tools.languages import LEGACY_LANGUAGES, SUPPORTED_LANGUAGES, normalize_languages
 from tools.templates import (
     BAZEL_DEVTOOLS_VERSION,
     TEMPLATES,
@@ -39,10 +39,10 @@ DEDICATED_BLOCK_PATHS = {
 MODULE_DEPENDENCY_PATTERN = re.compile(
     r"""(?sx)
     \bbazel_dep\s*\([^)]*\bname\s*=\s*['\"]
-    (?P<name>toolchains_llvm|hedron_compile_commands)['\"]
+    (?P<name>toolchains_llvm|hedron_compile_commands|aspect_rules_js|aspect_rules_ts)['\"]
     """
 )
-MODULE_SYMBOL_PATTERN = re.compile(r"(?m)^\s*bazel_devtools_llvm\s*=")
+MODULE_SYMBOL_PATTERN = re.compile(r"(?m)^\s*(?:bazel_devtools_llvm|bazel_devtools_rules_ts)\s*=")
 ROOT_TARGET_PATTERN = re.compile(
     r"""(?sx)
     \b[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\bname\s*=\s*['\"]
@@ -245,7 +245,7 @@ def _read_state(workspace: Path) -> _State:
     ):
         msg = f"unsupported state schema in {path}"
         raise SetupError(msg)
-    raw_languages = raw.get("languages", list(SUPPORTED_LANGUAGES))
+    raw_languages = raw.get("languages", list(LEGACY_LANGUAGES))
     if not isinstance(raw_languages, list):
         msg = f"invalid language selection in {path}"
         raise SetupError(msg)
@@ -364,7 +364,10 @@ def _json_extends(path: Path, expected: str) -> bool:
     if not isinstance(decoded, dict):
         return False
     raw = cast("dict[object, object]", decoded)
-    return raw.get("extends") == expected
+    extends = raw.get("extends")
+    if extends == expected:
+        return True
+    return isinstance(extends, list) and expected in extends
 
 
 def _message(*parts: str) -> str:
@@ -484,6 +487,54 @@ def _alternate_python_policy_issues(
     return issues
 
 
+def _typescript_policy_issues(
+    workspace: Path,
+    templates: tuple[Template, ...],
+) -> list[str]:
+    template_paths = {template.path for template in templates}
+    issues: list[str] = []
+    biome = workspace / "biome.json"
+    if (
+        "biome.json" in template_paths
+        and biome.exists()
+        and not _json_extends(biome, "./.bazel_devtools/biome.json")
+    ):
+        issues.append(
+            _message(
+                "existing biome.json does not inherit the bazel_devtools Biome baseline;",
+                "add it to the extends list before initializing",
+            )
+        )
+
+    tsconfig = workspace / "tsconfig.json"
+    if (
+        "tsconfig.json" in template_paths
+        and tsconfig.exists()
+        and not _json_extends(tsconfig, "./.bazel_devtools/tsconfig.json")
+    ):
+        issues.append(
+            _message(
+                "existing tsconfig.json does not inherit the bazel_devtools TypeScript baseline;",
+                "add the generated baseline before initializing",
+            )
+        )
+
+    alternate_files = {"biome.json": ("biome.jsonc",)}
+    for managed_path, alternatives in alternate_files.items():
+        if managed_path not in template_paths:
+            continue
+        existing = [relative for relative in alternatives if (workspace / relative).exists()]
+        if existing:
+            issues.append(
+                _message(
+                    f"existing alternative configuration would compete with {managed_path}:",
+                    f"{', '.join(existing)}; consolidate it into the generated inheritance chain",
+                    "before initializing",
+                )
+            )
+    return issues
+
+
 def _dedicated_file_issues(
     workspace: Path,
     templates: tuple[Template, ...],
@@ -538,7 +589,7 @@ def _bazel_graph_issues(
         if MODULE_SYMBOL_PATTERN.search(unmanaged):
             issues.append(
                 _message(
-                    "existing MODULE.bazel symbol bazel_devtools_llvm conflicts with the",
+                    "existing MODULE.bazel bazel_devtools extension symbol conflicts with a",
                     "managed extension name",
                 )
             )
@@ -605,6 +656,7 @@ def _brownfield_issues(
         *_policy_block_issues(workspace, templates),
         *_python_policy_issues(workspace, templates),
         *_alternate_python_policy_issues(workspace, templates),
+        *_typescript_policy_issues(workspace, templates),
         *_dedicated_file_issues(workspace, templates),
         *_bazel_graph_issues(workspace, templates),
         *_presubmit_adoption_issues(workspace, templates),

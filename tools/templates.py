@@ -83,7 +83,7 @@ BASEDPYRIGHT_POLICY = """\
 """
 
 
-MODULE_BLOCK = """\
+_CPP_MODULE_BLOCK = """\
 bazel_dep(name = "toolchains_llvm", version = "1.8.0", dev_dependency = True)
 bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
 git_override(
@@ -107,6 +107,28 @@ use_repo(
     "bazel_devtools_llvm_toolchain_llvm",
 )
 """
+
+
+_TYPESCRIPT_MODULE_BLOCK = """\
+bazel_dep(name = "aspect_rules_js", version = "3.4.0")
+bazel_dep(name = "aspect_rules_ts", version = "3.10.0")
+
+bazel_devtools_rules_ts = use_extension(
+    "@aspect_rules_ts//ts:extensions.bzl",
+    "typescript",
+)
+bazel_devtools_rules_ts.deps(version = "5.9.3")
+use_repo(bazel_devtools_rules_ts, "npm_typescript")
+"""
+
+
+def _module_block(languages: tuple[str, ...]) -> str:
+    parts: list[str] = []
+    if "cpp" in languages:
+        parts.append(_CPP_MODULE_BLOCK.rstrip())
+    if "typescript" in languages:
+        parts.append(_TYPESCRIPT_MODULE_BLOCK.rstrip())
+    return "\n\n".join(parts) + ("\n" if parts else "")
 
 
 CLANG_FORMAT_POLICY = """\
@@ -211,6 +233,76 @@ newline_style = "Unix"
 """
 
 
+BIOME_POLICY = """\
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
+  "files": {
+    "includes": ["**", "!**/bazel-*", "!**/node_modules"]
+  },
+  "formatter": {
+    "enabled": true,
+    "formatWithErrors": false,
+    "indentStyle": "space",
+    "lineEnding": "lf",
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "jsxQuoteStyle": "double",
+      "quoteStyle": "double",
+      "semicolons": "always"
+    }
+  }
+}
+"""
+
+
+TSCONFIG_POLICY = """\
+{
+  "compilerOptions": {
+    "allowJs": false,
+    "esModuleInterop": true,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "strict": true,
+    "target": "ES2022",
+    "verbatimModuleSyntax": true
+  }
+}
+"""
+
+
+BIOME_USER_CONFIG = """\
+{
+  "extends": ["./.bazel_devtools/biome.json"]
+}
+"""
+
+
+TSCONFIG_USER_CONFIG = """\
+{
+  "extends": "./.bazel_devtools/tsconfig.json"
+}
+"""
+
+
 BAZELRC_IMPORT_BLOCK = """\
 try-import %workspace%/.bazelrc.bazel_devtools
 """
@@ -234,13 +326,14 @@ def _bazelrc_devtools_block(languages: tuple[str, ...]) -> str:
         "python": ("ruff", "basedpyright", "ruff_format"),
         "cpp": ("clang_tidy", "clang_format"),
         "rust": ("rustfmt", "clippy"),
+        "typescript": ("biome_lint", "biome_format"),
     }
     for language in languages:
         lines.extend(
             f"test --aspects=//tools/bazel_devtools:aspects.bzl%{aspect}"
             for aspect in aspects[language]
         )
-    if "python" in languages or "cpp" in languages:
+    if "python" in languages or "cpp" in languages or "typescript" in languages:
         lines.append("test --@@aspect_rules_lint+//lint:fail_on_violation")
     if "rust" in languages:
         lines.extend(
@@ -317,11 +410,33 @@ clippy = rust_clippy_aspect
 """
 
 
+_TYPESCRIPT_ASPECTS = """\
+load(
+    "@bazel_devtools//checks:typescript.bzl",
+    "biome_format_aspect",
+    "biome_lint_aspect",
+)
+
+biome_lint = biome_lint_aspect(
+    binary = Label("@bazel_devtools//tools:biome"),
+    config = Label("//:biome.json"),
+    configs = [Label("//:.bazel_devtools/biome.json")],
+)
+
+biome_format = biome_format_aspect(
+    binary = Label("@bazel_devtools//tools:biome"),
+    config = Label("//:biome.json"),
+    configs = [Label("//:.bazel_devtools/biome.json")],
+)
+"""
+
+
 def _aspects_bzl(languages: tuple[str, ...]) -> str:
     content = {
         "python": _PYTHON_ASPECTS,
         "cpp": _CPP_ASPECTS,
         "rust": _RUST_ASPECTS,
+        "typescript": _TYPESCRIPT_ASPECTS,
     }
     loads: list[str] = []
     definitions: list[str] = []
@@ -351,6 +466,19 @@ tool_binary(
 tool_binary(
     name = "clang_tidy",
     src = "@bazel_devtools_llvm_toolchain_llvm//:bin/clang-tidy",
+)"""
+        )
+    if "typescript" in languages:
+        parts.append(
+            """\
+alias(
+    name = "biome",
+    actual = "@bazel_devtools//tools:biome",
+)
+
+alias(
+    name = "biome_cwd",
+    actual = "@bazel_devtools//tools:biome_cwd",
 )"""
         )
     language_lines = "\n".join(f'        "{language}",' for language in languages)
@@ -385,6 +513,15 @@ def _root_build_block(languages: tuple[str, ...]) -> str:
         exported.extend((".clang-format", ".clang-tidy"))
     if "rust" in languages:
         exported.append("rustfmt.toml")
+    if "typescript" in languages:
+        exported.extend(
+            (
+                ".bazel_devtools/biome.json",
+                ".bazel_devtools/tsconfig.json",
+                "biome.json",
+                "tsconfig.json",
+            )
+        )
     export_lines = "\n".join(f'    "{path}",' for path in sorted(exported))
     return f"""\
 exports_files([
@@ -434,7 +571,7 @@ PYRIGHT_EDITOR_CONFIG = """\
 """
 
 
-GITIGNORE_BLOCK = """\
+_GITIGNORE_BLOCK = """\
 /compile_commands.json
 /pyrightconfig.json
 /rust-project.json
@@ -442,6 +579,18 @@ GITIGNORE_BLOCK = """\
 /.ruff_cache/
 /external
 /.bazel_devtools/updates/
+"""
+
+
+def _gitignore_block(languages: tuple[str, ...]) -> str:
+    content = _GITIGNORE_BLOCK
+    if "typescript" in languages:
+        content += "/node_modules/\n"
+    return content
+
+
+REPO_BAZEL_TYPESCRIPT_BLOCK = """\
+ignore_directories(["**/node_modules"])
 """
 
 
@@ -542,18 +691,41 @@ def templates_for_languages(languages: Iterable[str]) -> tuple[Template, ...]:
                 "rustfmt-policy",
             )
         )
+    if "typescript" in selected:
+        templates.extend(
+            (
+                Template(
+                    ".bazel_devtools/biome.json",
+                    BIOME_POLICY,
+                    Ownership.MANAGED_FILE,
+                ),
+                Template(
+                    ".bazel_devtools/tsconfig.json",
+                    TSCONFIG_POLICY,
+                    Ownership.MANAGED_FILE,
+                ),
+                Template("biome.json", BIOME_USER_CONFIG, Ownership.CREATE_ONLY),
+                Template("tsconfig.json", TSCONFIG_USER_CONFIG, Ownership.CREATE_ONLY),
+            )
+        )
     templates.extend(
         (
             Template(
                 "MODULE.bazel",
-                MODULE_BLOCK if "cpp" in selected else "",
+                _module_block(selected),
                 Ownership.MANAGED_BLOCK,
                 "ide-dependencies",
+            ),
+            Template(
+                "REPO.bazel",
+                REPO_BAZEL_TYPESCRIPT_BLOCK if "typescript" in selected else "",
+                Ownership.MANAGED_BLOCK,
+                "typescript-node-modules",
             ),
             Template(".bazelrc", BAZELRC_IMPORT_BLOCK, Ownership.MANAGED_BLOCK, "bazelrc-import"),
             Template(
                 ".gitignore",
-                GITIGNORE_BLOCK,
+                _gitignore_block(selected),
                 Ownership.MANAGED_BLOCK,
                 "generated-ide-files",
             ),

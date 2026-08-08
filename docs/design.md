@@ -49,9 +49,10 @@ repository-wide filesystem walk from rewriting vendored or incidental files.
 
 ## Policy and overrides
 
-Tool-native inheritance is preferred. `.bazel_devtools/ruff.toml` and
-`.bazel_devtools/basedpyright.json` contain managed defaults; the root configs
-are user-owned and extend them. Tools without useful inheritance receive a
+Tool-native inheritance is preferred. `.bazel_devtools/ruff.toml`,
+`.bazel_devtools/basedpyright.json`, `.bazel_devtools/biome.json`, and
+`.bazel_devtools/tsconfig.json` contain managed defaults; the root configs are
+user-owned and extend them. Tools without useful inheritance receive a
 small managed block in their normal configuration file.
 
 The baseline is strict and explicit: enable the broadest coherent stable rule
@@ -132,11 +133,17 @@ supported opt-out tag.
 ## Language selection
 
 Setup renders one coherent template set from an explicit combination of
-Python, C++, and Rust support. The canonical selection is persisted in setup
-state and drives check aspects, formatter targets, policy files, toolchain
+Python, C++, Rust, and TypeScript support. The canonical selection is persisted
+in setup state and drives check aspects, formatter targets, policy files, toolchain
 configuration, write-mode target discovery, and IDE synchronization. A
 language-specific public `.bzl` facade avoids loading another language's rule
 set merely to construct the selected aspects.
+
+TypeScript checks attach only to first-party `ts_project` source ownership.
+Biome supplies formatting and syntax/semantic lint rules from a pinned native
+binary, while `rules_ts` supplies the compiler-backed typecheck test. React and
+other npm packages stay in the consumer's own lockfile and target graph; the
+tooling module does not choose application dependencies.
 
 Changing the selection uses the normal upgrade state machine. Shared generated
 blocks receive a three-way update, newly selected policy is adopted, and
@@ -198,7 +205,8 @@ safety boundary around explicitly invoked actions such as hardware flashing.
 
 CI tools are pinned through Bazel. Editors may use their own language-server
 versions because the handoff formats (`pyrightconfig.json`,
-`compile_commands.json`, and `rust-project.json`) are stable data contracts.
+`compile_commands.json`, `rust-project.json`, and the inherited root
+`tsconfig.json`) are stable data contracts.
 The Pyright handoff enumerates Bazel-owned source files explicitly; import
 search paths remain separate in `extraPaths` and do not broaden the analysis
 set.

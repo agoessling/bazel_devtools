@@ -22,6 +22,16 @@ alias(
     actual = "@aspect_rules_lint//lint:ruff_bin",
 )
 
+alias(
+    name = "biome",
+    actual = "@multitool//tools/biome",
+)
+
+alias(
+    name = "biome_cwd",
+    actual = "@multitool//tools/biome:cwd",
+)
+
 py_library(
     name = "bazel_support",
     srcs = ["bazel_support.py"],

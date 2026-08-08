@@ -21,6 +21,7 @@ from tools.bazel_support import (
 )
 from tools.bazel_wrapper import write_bazel_wrapper
 from tools.language_support import configured_languages
+from tools.languages import SUPPORTED_LANGUAGES
 
 PY_TARGETS = 'kind("py_(library|binary|test) rule", //...) except attr("tags", "no-ide", //...)'
 PY_MATERIALIZATION_TARGETS = (
@@ -171,12 +172,20 @@ def _sync_rust(workspace: Path) -> None:
     print(f"wrote {workspace / 'rust-project.json'}")
 
 
+def _sync_typescript(workspace: Path) -> None:
+    config = workspace / "tsconfig.json"
+    if not config.is_file():
+        msg = f"TypeScript support is missing {config}"
+        raise RuntimeError(msg)
+    print(f"using native TypeScript project metadata from {config}")
+
+
 def main() -> int:
     """Generate project metadata for the languages present in the workspace."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--language",
-        choices=("python", "cpp", "rust"),
+        choices=SUPPORTED_LANGUAGES,
         action="append",
         help="sync only selected languages (repeatable)",
     )
@@ -196,6 +205,7 @@ def main() -> int:
         ("python", "py_(library|binary|test) rule", _sync_python),
         ("cpp", "cc_(library|binary|test) rule", _sync_cpp),
         ("rust", "rust_(library|binary|test) rule", _sync_rust),
+        ("typescript", "(ts_project|ts_project_rule) rule", _sync_typescript),
     )
     try:
         for language, kinds, operation in operations:

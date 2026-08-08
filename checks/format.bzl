@@ -4,12 +4,21 @@ load("//checks:propagation.bzl", "dependency_infos")
 
 _PYTHON_RULE_KINDS = ["py_binary", "py_library", "py_test"]
 _CPP_RULE_KINDS = ["cc_binary", "cc_library", "cc_test"]
+_TYPESCRIPT_RULE_KINDS = ["ts_project", "ts_project_rule"]
 _PYTHON_EXTENSIONS = ["py", "pyi"]
 _CPP_EXTENSIONS = ["c", "cc", "cpp", "cxx", "c++", "h", "hh", "hpp", "hxx", "inc"]
+_TYPESCRIPT_EXTENSIONS = ["ts", "tsx"]
 
 _ClangFormatPropagationInfo = provider(
     fields = {
         "format_checks": "transitive clang-format validation outputs",
+        "validation": "transitive validation outputs",
+    },
+)
+
+_BiomeFormatPropagationInfo = provider(
+    fields = {
+        "format_checks": "transitive Biome format validation outputs",
         "validation": "transitive validation outputs",
     },
 )
@@ -82,6 +91,84 @@ touch "$marker"
             bazel_devtools_format_checks = depset([marker]),
         ),
     ]
+
+
+def _merge_biome_format_outputs(ctx, own = None):
+    dependencies = dependency_infos(ctx.rule.attr, _BiomeFormatPropagationInfo)
+    validation = depset(
+        transitive = [dependency.validation for dependency in dependencies] +
+                     ([own._validation] if own else []),
+    )
+    format_checks = depset(
+        transitive = [dependency.format_checks for dependency in dependencies] +
+                     ([own.bazel_devtools_format_checks] if own else []),
+    )
+    return [
+        OutputGroupInfo(
+            _validation = validation,
+            bazel_devtools_format_checks = format_checks,
+        ),
+        _BiomeFormatPropagationInfo(
+            format_checks = format_checks,
+            validation = validation,
+        ),
+    ]
+
+
+def _biome_format_impl(target, ctx):
+    if target.label.repo_name or ctx.rule == None:
+        return _empty_validation()
+    tags = _tags(ctx)
+    if "no-format" in tags or "no-biome-format" in tags:
+        return _merge_biome_format_outputs(ctx)
+    if ctx.rule.kind not in ctx.attr._rule_kinds:
+        return _merge_biome_format_outputs(ctx)
+    sources = _owned_sources(ctx, _TYPESCRIPT_EXTENSIONS)
+    if not sources:
+        return _merge_biome_format_outputs(ctx)
+    own = _run_check(
+        ctx,
+        "BiomeFormat",
+        ctx.executable._binary,
+        [
+            "format",
+            "--config-path",
+            ctx.file._config.path,
+            "--max-diagnostics=none",
+        ],
+        ctx.files._configs,
+        sources,
+    )[0]
+    return _merge_biome_format_outputs(ctx, own)
+
+
+def biome_format_aspect(
+        binary,
+        config,
+        configs = [],
+        rule_kinds = _TYPESCRIPT_RULE_KINDS,
+        attr_aspects = []):
+    """Creates a Biome format-check aspect for TypeScript targets."""
+    return aspect(
+        implementation = _biome_format_impl,
+        attr_aspects = attr_aspects,
+        attrs = {
+            "_binary": attr.label(
+                default = binary,
+                executable = True,
+                cfg = "exec",
+            ),
+            "_config": attr.label(
+                default = config,
+                allow_single_file = True,
+            ),
+            "_configs": attr.label_list(
+                default = [config] + configs,
+                allow_files = True,
+            ),
+            "_rule_kinds": attr.string_list(default = rule_kinds),
+        },
+    )
 
 
 def _ruff_format_impl(target, ctx):

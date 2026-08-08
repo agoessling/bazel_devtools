@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import cast
 
-from tools.languages import SUPPORTED_LANGUAGES, normalize_languages
+from tools.languages import LEGACY_LANGUAGES, SUPPORTED_LANGUAGES, normalize_languages
 
 _STATE_PATH = Path(".bazel_devtools/state.json")
 
@@ -27,7 +27,7 @@ def configured_languages(workspace: Path) -> tuple[str, ...]:
         msg = f"bazel_devtools state in {path} is not a JSON object"
         raise TypeError(msg)
     state = cast("dict[object, object]", decoded)
-    raw_languages = state.get("languages", list(SUPPORTED_LANGUAGES))
+    raw_languages = state.get("languages", list(LEGACY_LANGUAGES))
     if not isinstance(raw_languages, list):
         msg = f"bazel_devtools state in {path} has an invalid language selection"
         raise TypeError(msg)

@@ -28,6 +28,8 @@ SUPPORTED_SUFFIXES = {
     ".py",
     ".pyi",
     ".rs",
+    ".ts",
+    ".tsx",
 }
 TARGET_PATTERN = re.compile(r"^(?:@[^/]+)?//[A-Za-z0-9_./+*-]*(?::[A-Za-z0-9_./+*-]+)?$")
 
@@ -57,6 +59,11 @@ def _owned_sources(
         "rust": (
             "rust_(library|binary|test) rule",
             "(no-rustfmt|norustfmt)",
+            ("srcs",),
+        ),
+        "typescript": (
+            "(ts_project|ts_project_rule) rule",
+            "no-biome-format",
             ("srcs",),
         ),
     }
@@ -134,19 +141,36 @@ def main() -> int:
         return 0
 
     print(f"Formatting {len(sources)} Bazel-owned source file(s).", flush=True)
-    result = subprocess.run(
-        bazel_command(
+    typescript_sources = [path for path in sources if path.suffix in {".ts", ".tsx"}]
+    other_sources = [path for path in sources if path not in typescript_sources]
+    commands: list[list[str]] = []
+    if other_sources:
+        commands.append(
             [
                 "run",
                 "//tools/bazel_devtools:formatters",
                 "--",
-                *[str(path) for path in sources],
+                *[str(path) for path in other_sources],
             ]
-        ),
-        cwd=workspace,
-        check=False,
-    )
-    return result.returncode
+        )
+    if typescript_sources:
+        commands.append(
+            [
+                "run",
+                "//tools/bazel_devtools:biome_cwd",
+                "--",
+                "format",
+                "--write",
+                "--config-path=biome.json",
+                "--max-diagnostics=none",
+                *[str(path) for path in typescript_sources],
+            ]
+        )
+    for command in commands:
+        result = subprocess.run(bazel_command(command), cwd=workspace, check=False)
+        if result.returncode:
+            return result.returncode
+    return 0
 
 
 if __name__ == "__main__":

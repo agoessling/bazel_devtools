@@ -14,6 +14,8 @@ test --aspects=//tools/bazel_devtools:aspects.bzl%clang_tidy
 test --aspects=//tools/bazel_devtools:aspects.bzl%clang_format
 test --aspects=//tools/bazel_devtools:aspects.bzl%rustfmt
 test --aspects=//tools/bazel_devtools:aspects.bzl%clippy
+test --aspects=//tools/bazel_devtools:aspects.bzl%biome_lint
+test --aspects=//tools/bazel_devtools:aspects.bzl%biome_format
 test --@@aspect_rules_lint+//lint:fail_on_violation
 test --@@rules_rust+//rust/settings:rustfmt.toml=//:rustfmt.toml
 test --@@rules_rust+//rust/settings:clippy_flags=-Dwarnings,-Dclippy::all,-Dclippy::pedantic,-Dclippy::nursery

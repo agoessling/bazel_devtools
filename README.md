@@ -1,9 +1,10 @@
 # bazel_devtools
 
 `bazel_devtools` is an opinionated, Bazel-first development-tooling layer for
-Linux repositories containing Python, C++, and Rust. Bazel targets define the
-source boundary: checks run as aspects during `bazel test`, and write-mode
-formatting touches only source files owned by selected Bazel targets.
+Linux repositories containing Python, C++, Rust, and TypeScript/TSX. Bazel
+targets define the source boundary: checks run as aspects during `bazel test`,
+and write-mode formatting touches only source files owned by selected Bazel
+targets.
 
 The default policy uses:
 
@@ -11,12 +12,17 @@ The default policy uses:
 - BasedPyright in all mode for Python type checking;
 - clang-format and clang-tidy for C and C++;
 - rustfmt, Clippy, and rust-analyzer for Rust;
+- Biome for TypeScript and TSX formatting and linting;
+- TypeScript 5.9 through `rules_ts` with a strict inherited `tsconfig.json`;
 - target-graph discovery, with generated and external files excluded by default;
 - editor-owned language-server binaries with Bazel-generated project metadata.
 
 Lint and type-check defaults start strict: Ruff enables every stable rule,
 BasedPyright uses `all`, clang-tidy enables reviewed general-purpose families,
-and Clippy enables `all`, `pedantic`, and `nursery` with warnings denied.
+Clippy enables `all`, `pedantic`, and `nursery` with warnings denied, Biome
+enables its stable recommended rules with warnings treated as failures, and
+TypeScript enables `strict` plus additional unchecked-access and unused-code
+diagnostics.
 clang-tidy begins from `-*`, so vendor-specific families cannot enter the policy
 implicitly, and records narrow platform, API-design, and high-noise exclusions,
 including the diagnostic that requires redundant parentheses around
@@ -62,17 +68,17 @@ bazel run @bazel_devtools//tools:format -- //...
 bazel run //:ide-sync
 ```
 
-Repeat `--language` to select any combination of `python`, `cpp`, and `rust`.
-Omitting it during first-time setup installs all three integrations. The
-selection is persisted for `doctor`, `upgrade`, formatting, and IDE metadata
-generation, so an unused language does not pull its formatter or toolchain into
-the consuming repository's configured target graph. Because `plan` is
-read-only, repeat the same selection when running `init`.
+Repeat `--language` to select any combination of `python`, `cpp`, `rust`, and
+`typescript`. Omitting it during first-time setup installs all four
+integrations. The selection is persisted for `doctor`, `upgrade`, formatting,
+and IDE metadata generation, so an unused language does not pull its formatter
+or toolchain into the consuming repository's configured target graph. Because
+`plan` is read-only, repeat the same selection when running `init`.
 
 Language selection avoids configuring and downloading unused compiler and
 formatter toolchains during normal consumer commands. `bazel_devtools` is still
 one Bazel module, so module resolution can include the rule-set metadata needed
-to support all three languages even when only a subset is installed.
+to support all four languages even when only a subset is installed.
 
 `setup plan` is read-only with respect to repository configuration and setup
 state. It reports every file or block that initialization would add and exits
@@ -83,10 +89,13 @@ Repositories that relied on Bazel synthesizing `__init__.py` files must add
 real files to the appropriate Python targets before adopting the generated
 configuration.
 
-Commit the files created by `setup init`. Ruff and BasedPyright use native
-configuration inheritance, so repository overrides belong in `.ruff.toml` and
-`basedpyright.json`. Files that cannot inherit contain narrowly scoped markers
-such as:
+Commit the files created by `setup init`. Ruff, BasedPyright, Biome, and
+TypeScript use native configuration inheritance, so repository overrides
+belong in `.ruff.toml`, `basedpyright.json`, `biome.json`, and `tsconfig.json`.
+TypeScript setup owns the toolchain and policy integration, while an
+application continues to own its `package.json`, package-manager lockfile,
+React version, and Bazel npm targets. Files that cannot inherit contain
+narrowly scoped markers such as:
 
 ```text
 # ##BAZEL_DEVTOOLS_MANAGED_BEGIN:checks##
@@ -114,7 +123,9 @@ Tags are the public exception mechanism:
 | Python formatting | `no-ruff-format` |
 | C/C++ formatting | `no-clang-format` |
 | Rust formatting | `no-rustfmt` |
-| Ruff or clang-tidy lint | `no-lint` |
+| TypeScript/TSX formatting | `no-biome-format` |
+| Ruff, clang-tidy, or Biome lint | `no-lint` |
+| TypeScript/TSX lint | `no-biome-lint` |
 | BasedPyright | `no-typecheck` or `no-basedpyright` |
 | Clippy | `no-clippy` or `no-lint` |
 | editor project discovery | `no-ide` |
@@ -181,6 +192,9 @@ project models. `bazel run //:ide-sync` writes:
 - `pyrightconfig.json` for BasedPyright/Pyright;
 - `compile_commands.json` for clangd;
 - `rust-project.json` for rust-analyzer.
+
+For TypeScript, the command validates the inherited root `tsconfig.json`; the
+editor's TypeScript language server consumes it natively.
 
 The Pyright model contains an explicit `include` list of Bazel-owned `.py` and
 `.pyi` source files. This keeps workspace diagnostics enabled without allowing

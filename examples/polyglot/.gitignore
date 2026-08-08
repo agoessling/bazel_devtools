@@ -8,4 +8,5 @@
 /.ruff_cache/
 /external
 /.bazel_devtools/updates/
+/node_modules/
 # ##BAZEL_DEVTOOLS_MANAGED_END:generated-ide-files##

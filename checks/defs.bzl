@@ -1,6 +1,11 @@
 """Public factories for bazel_devtools target-graph checks."""
 
 load(
+    "//checks:typescript.bzl",
+    _biome_format_aspect = "biome_format_aspect",
+    _biome_lint_aspect = "biome_lint_aspect",
+)
+load(
     "//checks:cpp.bzl",
     _clang_format_aspect = "clang_format_aspect",
     _lint_clang_tidy_aspect = "lint_clang_tidy_aspect",
@@ -26,3 +31,5 @@ ruff_format_aspect = _ruff_format_aspect
 ruff_lint_aspect = _ruff_lint_aspect
 rust_clippy_aspect = _rust_clippy_aspect
 rustfmt_aspect = _rustfmt_aspect
+biome_format_aspect = _biome_format_aspect
+biome_lint_aspect = _biome_lint_aspect

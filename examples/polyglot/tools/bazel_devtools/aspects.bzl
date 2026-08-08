@@ -18,6 +18,12 @@ load(
     "rustfmt_aspect",
 )
 
+load(
+    "@bazel_devtools//checks:typescript.bzl",
+    "biome_format_aspect",
+    "biome_lint_aspect",
+)
+
 ruff = ruff_lint_aspect(
     binary = Label("@bazel_devtools//tools:ruff"),
     configs = [
@@ -53,4 +59,16 @@ clang_format = clang_format_aspect(
 
 rustfmt = rustfmt_aspect
 clippy = rust_clippy_aspect
+
+biome_lint = biome_lint_aspect(
+    binary = Label("@bazel_devtools//tools:biome"),
+    config = Label("//:biome.json"),
+    configs = [Label("//:.bazel_devtools/biome.json")],
+)
+
+biome_format = biome_format_aspect(
+    binary = Label("@bazel_devtools//tools:biome"),
+    config = Label("//:biome.json"),
+    configs = [Label("//:.bazel_devtools/biome.json")],
+)
 # ##BAZEL_DEVTOOLS_MANAGED_END:aspects##
