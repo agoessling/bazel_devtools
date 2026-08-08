@@ -6,6 +6,13 @@ ts_config(
     deps = ["//:tsconfig"],
 )
 
+# A bundler with a single-file tsconfig attribute must receive a standalone
+# transform config rather than the inherited typecheck provider graph.
+ts_config(
+    name = "tsconfig_esbuild",
+    src = "tsconfig.esbuild.json",
+)
+
 ts_project(
     name = "greeting",
     srcs = [

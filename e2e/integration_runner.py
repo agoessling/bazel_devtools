@@ -147,6 +147,29 @@ def _array(value: object, description: str) -> list[object]:
     return cast("list[object]", value)
 
 
+def _check_typescript_config_targets(workspace: Path, *, expected: bool) -> None:
+    root_build = (workspace / "BUILD.bazel").read_text(encoding="utf-8")
+    tools_build = (workspace / "tools/bazel_devtools/BUILD.bazel").read_text(encoding="utf-8")
+    has_root_tsconfig = 'src = ".bazel_devtools/tsconfig.json"' in root_build
+    if has_root_tsconfig != expected:
+        _fail("setup produced unexpected root TypeScript config targets")
+    if "tsconfig_base" in tools_build:
+        _fail("setup put root TypeScript config targets in the tools package")
+
+
+def _check_bundler_transform_config(workspace: Path) -> None:
+    esbuild_tsconfig = _object(
+        _json(workspace / "typescript/tsconfig.esbuild.json"),
+        "typescript/tsconfig.esbuild.json",
+    )
+    compiler_options = _object(
+        esbuild_tsconfig.get("compilerOptions"),
+        "typescript/tsconfig.esbuild.json compilerOptions",
+    )
+    if "extends" in esbuild_tsconfig or compiler_options.get("jsx") != "react-jsx":
+        _fail("the bundler transform config must be standalone and preserve modern JSX")
+
+
 @final
 class Integration:
     def __init__(self) -> None:
@@ -271,21 +294,8 @@ local_path_override(
             (workspace / "BUILD.bazel").write_text(
                 """\
 load("@npm//:defs.bzl", "npm_link_all_packages")
-load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
 
 npm_link_all_packages(name = "node_modules")
-
-ts_config(
-    name = "tsconfig_base",
-    src = ".bazel_devtools/tsconfig.json",
-)
-
-ts_config(
-    name = "tsconfig",
-    src = "tsconfig.json",
-    deps = [":tsconfig_base"],
-    visibility = ["//visibility:public"],
-)
 """,
                 encoding="utf-8",
             )
@@ -502,6 +512,7 @@ use_repo(npm, "npm")
             _fail(f"{language}-only setup produced unexpected Rust toolchain configuration")
         if ("aspect_rules_ts" in module) != (language == "typescript"):
             _fail(f"{language}-only setup produced unexpected TypeScript rule configuration")
+        _check_typescript_config_targets(workspace, expected=language == "typescript")
 
     def replace_and_reject(
         self,
@@ -792,6 +803,7 @@ use_repo(npm, "npm")
         tsconfig = _object(_json(self.workspace / "tsconfig.json"), "tsconfig.json")
         if tsconfig.get("extends") != "./.bazel_devtools/tsconfig.json":
             _fail("tsconfig.json does not extend the managed TypeScript baseline")
+        _check_bundler_transform_config(self.workspace)
 
         nvim = _runfile(os.environ["BAZEL_DEVTOOLS_NVIM"])
         script = self.scratch_repo / "e2e/minimal_neovim_probe.lua"

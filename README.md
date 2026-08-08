@@ -94,7 +94,11 @@ TypeScript use native configuration inheritance, so repository overrides
 belong in `.ruff.toml`, `basedpyright.json`, `biome.json`, and `tsconfig.json`.
 TypeScript setup owns the toolchain and policy integration, while an
 application continues to own its `package.json`, package-manager lockfile,
-React version, and Bazel npm targets. Files that cannot inherit contain
+React version, and Bazel npm targets. Setup also publishes `//:tsconfig_base`
+and `//:tsconfig` with the Bazel provider edges needed by package configs in
+sandboxed typecheck actions. Bundler-specific transform configs remain
+application-owned and should be standalone when the bundler accepts only one
+physical config file. Files that cannot inherit contain
 narrowly scoped markers such as:
 
 ```text

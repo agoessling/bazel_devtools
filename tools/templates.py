@@ -523,8 +523,27 @@ def _root_build_block(languages: tuple[str, ...]) -> str:
             )
         )
     export_lines = "\n".join(f'    "{path}",' for path in sorted(exported))
+    typescript_targets = ""
+    if "typescript" in languages:
+        typescript_targets = """\
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
+
+ts_config(
+    name = "tsconfig_base",
+    src = ".bazel_devtools/tsconfig.json",
+    visibility = ["//visibility:public"],
+)
+
+ts_config(
+    name = "tsconfig",
+    src = "tsconfig.json",
+    deps = [":tsconfig_base"],
+    visibility = ["//visibility:public"],
+)
+
+"""
     return f"""\
-exports_files([
+{typescript_targets}exports_files([
 {export_lines}
 ])
 

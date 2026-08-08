@@ -145,6 +145,22 @@ binary, while `rules_ts` supplies the compiler-backed typecheck test. React and
 other npm packages stay in the consumer's own lockfile and target graph; the
 tooling module does not choose application dependencies.
 
+Setup publishes `//:tsconfig_base` and `//:tsconfig` as root-package
+`ts_config` targets. Root placement is required because `rules_ts` copies each
+source config to the corresponding output-tree path and rejects a direct
+source from another Bazel package. Package configs use a physical JSON
+`extends` edge for TypeScript and editors plus a Bazel `deps` edge for sandbox
+inputs. The root names are collision-checked outside the managed block during
+both initialization and language-enabling upgrades.
+
+Bundler transforms are a separate boundary. `rules_esbuild` 0.27 stages only
+the single physical file named by its `tsconfig` attribute and does not follow
+the `TsConfigInfo` dependency graph. A standalone, non-inheriting transform
+config must repeat settings such as `jsx: react-jsx`; strict `ts_project`
+typechecking continues to use the inherited provider graph. The application
+owns that bundler-specific config because bazel_devtools does not select a
+bundler.
+
 Changing the selection uses the normal upgrade state machine. Shared generated
 blocks receive a three-way update, newly selected policy is adopted, and
 deselected managed files are left on disk while setup retires ownership. This

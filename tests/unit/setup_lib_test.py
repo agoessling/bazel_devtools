@@ -211,6 +211,19 @@ class SetupLifecycleTest(unittest.TestCase):
         )
         doctor(self.workspace)
 
+    def test_typescript_setup_generates_the_root_config_provider_graph(self) -> None:
+        initialize(self.workspace)
+
+        root_build = (self.workspace / "BUILD.bazel").read_text()
+        self.assertIn('load("@aspect_rules_ts//ts:defs.bzl", "ts_config")', root_build)
+        self.assertIn('name = "tsconfig_base"', root_build)
+        self.assertIn('src = ".bazel_devtools/tsconfig.json"', root_build)
+        self.assertIn('name = "tsconfig"', root_build)
+        self.assertIn('src = "tsconfig.json"', root_build)
+        self.assertIn('deps = [":tsconfig_base"]', root_build)
+        tools_build = (self.workspace / "tools/bazel_devtools/BUILD.bazel").read_text()
+        self.assertNotIn("tsconfig_base", tools_build)
+
     def test_setup_installs_only_selected_language_integrations(self) -> None:
         templates = templates_for_languages(("python", "cpp"))
 
@@ -264,6 +277,16 @@ class SetupLifecycleTest(unittest.TestCase):
                 module = by_path["MODULE.bazel"].content
                 self.assertEqual("cpp" in selection, "toolchains_llvm" in module)
                 self.assertEqual("typescript" in selection, "aspect_rules_ts" in module)
+                root_build = by_path["BUILD.bazel"].content
+                tools_build = by_path["tools/bazel_devtools/BUILD.bazel"].content
+                self.assertEqual(
+                    "typescript" in selection,
+                    'src = ".bazel_devtools/tsconfig.json"' in root_build,
+                )
+                self.assertEqual(
+                    "typescript" in selection,
+                    'actual = "@bazel_devtools//tools:biome"' in tools_build,
+                )
 
     def test_upgrade_changes_the_persisted_language_selection(self) -> None:
         python_templates = templates_for_languages(("python",))
@@ -372,6 +395,49 @@ class SetupLifecycleTest(unittest.TestCase):
         self.assertEqual(module_before, module.read_bytes())
         self.assertEqual(state_before, state_path.read_bytes())
 
+    def test_enabling_typescript_rejects_unmanaged_root_config_targets(self) -> None:
+        python_only = templates_for_languages(("python",))
+        initialize(self.workspace, python_only, languages=("python",))
+        build = self.workspace / "BUILD.bazel"
+        build.write_text(
+            build.read_text()
+            + """\
+
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
+
+filegroup(name = "tsconfig_base")
+filegroup(name = "tsconfig")
+""",
+            encoding="utf-8",
+        )
+        build_before = build.read_bytes()
+        state_path = self.workspace / ".bazel_devtools/state.json"
+        state_before = state_path.read_bytes()
+
+        with self.assertRaisesRegex(SetupError, "tsconfig, tsconfig_base"):
+            upgrade(
+                self.workspace,
+                templates_for_languages(("python", "typescript")),
+                languages=("python", "typescript"),
+            )
+
+        self.assertEqual(build_before, build.read_bytes())
+        self.assertEqual(state_before, state_path.read_bytes())
+        self.assertFalse((self.workspace / ".bazel_devtools/tsconfig.json").exists())
+
+    def test_typescript_init_rejects_an_unmanaged_root_tsconfig_load(self) -> None:
+        (self.workspace / "BUILD.bazel").write_text(
+            'load("@aspect_rules_ts//ts:defs.bzl", "ts_config")\n',
+            encoding="utf-8",
+        )
+
+        result = plan_initialize(
+            self.workspace,
+            templates_for_languages(("typescript",)),
+        )
+
+        self.assertTrue(any("load binds" in issue for issue in result.conflicts))
+
     def test_legacy_state_defaults_to_all_languages_and_migrates_on_upgrade(self) -> None:
         initialize(self.workspace)
         state_path = self.workspace / ".bazel_devtools/state.json"
@@ -450,7 +516,7 @@ class SetupLifecycleTest(unittest.TestCase):
             encoding="utf-8",
         )
         (self.workspace / "BUILD.bazel").write_text(
-            'filegroup(name = "format")\n',
+            'filegroup(name = "format")\nfilegroup(name = "tsconfig")\n',
             encoding="utf-8",
         )
         tools = self.workspace / "tools/bazel_devtools"
@@ -460,7 +526,12 @@ class SetupLifecycleTest(unittest.TestCase):
         result = plan_initialize(self.workspace)
 
         self.assertTrue(any("toolchains_llvm" in issue for issue in result.conflicts))
-        self.assertTrue(any("root BUILD targets" in issue for issue in result.conflicts))
+        self.assertTrue(
+            any(
+                "root BUILD targets" in issue and "format, tsconfig" in issue
+                for issue in result.conflicts
+            )
+        )
         self.assertTrue(any("aspects.bzl" in issue for issue in result.conflicts))
 
     def test_brownfield_presubmit_files_require_explicit_migration(self) -> None:

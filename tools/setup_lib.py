@@ -42,11 +42,18 @@ MODULE_DEPENDENCY_PATTERN = re.compile(
     (?P<name>toolchains_llvm|hedron_compile_commands|aspect_rules_js|aspect_rules_ts)['\"]
     """
 )
-MODULE_SYMBOL_PATTERN = re.compile(r"(?m)^\s*(?:bazel_devtools_llvm|bazel_devtools_rules_ts)\s*=")
+MODULE_SYMBOL_PATTERN = re.compile(
+    r"(?m)^\s*(?P<name>bazel_devtools_llvm|bazel_devtools_rules_ts)\s*="
+)
 ROOT_TARGET_PATTERN = re.compile(
     r"""(?sx)
     \b[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\bname\s*=\s*['\"]
-    (?P<name>format|ide-sync|install-hooks|pre-commit)['\"]
+    (?P<name>format|ide-sync|install-hooks|pre-commit|tsconfig|tsconfig_base)['\"]
+    """
+)
+ROOT_TS_CONFIG_LOAD_PATTERN = re.compile(
+    r"""(?sx)
+    \bload\s*\([^)]*(?:['\"]ts_config['\"]|\bts_config\s*=)
     """
 )
 PRE_COMMIT_HOOK_PATTERN = re.compile(r"(?m)^\s*-\s+id:\s*bazel-devtools-check\s*$")
@@ -561,7 +568,6 @@ def _bazel_graph_issues(
     workspace: Path,
     templates: tuple[Template, ...],
 ) -> list[str]:
-    template_paths = {template.path for template in templates}
     issues: list[str] = []
     module = workspace / "MODULE.bazel"
     module_template = next(
@@ -575,8 +581,16 @@ def _bazel_graph_issues(
         unmanaged = (
             content if managed is None else content[: managed.begin] + content[managed.end :]
         )
+        reserved_dependencies = {
+            match.group("name")
+            for match in MODULE_DEPENDENCY_PATTERN.finditer(module_template.content)
+        }
         dependencies = sorted(
-            {match.group("name") for match in MODULE_DEPENDENCY_PATTERN.finditer(unmanaged)}
+            {
+                match.group("name")
+                for match in MODULE_DEPENDENCY_PATTERN.finditer(unmanaged)
+                if match.group("name") in reserved_dependencies
+            }
         )
         if dependencies:
             issues.append(
@@ -586,7 +600,13 @@ def _bazel_graph_issues(
                     "ide-dependencies block before initializing",
                 )
             )
-        if MODULE_SYMBOL_PATTERN.search(unmanaged):
+        reserved_symbols = {
+            match.group("name") for match in MODULE_SYMBOL_PATTERN.finditer(module_template.content)
+        }
+        if any(
+            match.group("name") in reserved_symbols
+            for match in MODULE_SYMBOL_PATTERN.finditer(unmanaged)
+        ):
             issues.append(
                 _message(
                     "existing MODULE.bazel bazel_devtools extension symbol conflicts with a",
@@ -595,21 +615,44 @@ def _bazel_graph_issues(
             )
 
     build = workspace / "BUILD.bazel"
-    if "BUILD.bazel" in template_paths and build.exists():
+    build_template = next(
+        (template for template in templates if template.path == "BUILD.bazel"),
+        None,
+    )
+    if build_template is not None and build.exists():
         content = build.read_text(encoding="utf-8")
         blocks = parse_blocks(content)
-        if "root-aliases" not in blocks:
-            targets = sorted(
-                {match.group("name") for match in ROOT_TARGET_PATTERN.finditer(content)}
-            )
-            if targets:
-                issues.append(
-                    _message(
-                        "existing root BUILD targets reserve bazel_devtools names:",
-                        f"{', '.join(targets)}; rename or explicitly reconcile them before",
-                        "initializing",
-                    )
+        managed = blocks.get("root-aliases")
+        unmanaged = (
+            content if managed is None else content[: managed.begin] + content[managed.end :]
+        )
+        reserved = {
+            match.group("name") for match in ROOT_TARGET_PATTERN.finditer(build_template.content)
+        }
+        targets = sorted(
+            {
+                match.group("name")
+                for match in ROOT_TARGET_PATTERN.finditer(unmanaged)
+                if match.group("name") in reserved
+            }
+        )
+        if targets:
+            issues.append(
+                _message(
+                    "existing root BUILD targets reserve bazel_devtools names:",
+                    f"{', '.join(targets)}; rename or explicitly reconcile them before",
+                    "initializing",
                 )
+            )
+        if ROOT_TS_CONFIG_LOAD_PATTERN.search(
+            build_template.content
+        ) and ROOT_TS_CONFIG_LOAD_PATTERN.search(unmanaged):
+            issues.append(
+                _message(
+                    "existing root BUILD load binds the bazel_devtools-managed ts_config",
+                    "symbol; remove or explicitly reconcile it before initializing",
+                )
+            )
     return issues
 
 
@@ -823,16 +866,14 @@ def _preflight_upgrade(
     new_templates = tuple(template for template in templates if template.path not in entries)
     adoption_issues = _brownfield_issues(workspace, new_templates)
     new_paths = {template.path for template in new_templates}
-    active_module = next(
-        (
-            template
-            for template in templates
-            if template.path == "MODULE.bazel" and template.content.strip()
-        ),
-        None,
+    active_graph_templates = tuple(
+        template
+        for template in templates
+        if template.path in {"BUILD.bazel", "MODULE.bazel"}
+        and template.content.strip()
+        and template.path not in new_paths
     )
-    if active_module is not None and active_module.path not in new_paths:
-        adoption_issues.extend(_bazel_graph_issues(workspace, (active_module,)))
+    adoption_issues.extend(_bazel_graph_issues(workspace, active_graph_templates))
     if adoption_issues:
         details = "\n  - ".join(adoption_issues)
         msg = f"upgrade requires adoption changes:\n  - {details}"

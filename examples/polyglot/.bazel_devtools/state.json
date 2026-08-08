@@ -78,9 +78,9 @@
       "template_version": "0.1.0"
     },
     "BUILD.bazel": {
-      "base": "exports_files([\n    \".bazel_devtools/basedpyright.json\",\n    \".bazel_devtools/biome.json\",\n    \".bazel_devtools/ruff.toml\",\n    \".bazel_devtools/tsconfig.json\",\n    \".clang-format\",\n    \".clang-tidy\",\n    \".github/workflows/bazel-devtools.yml\",\n    \".pre-commit-config.yaml\",\n    \".ruff.toml\",\n    \"basedpyright.json\",\n    \"biome.json\",\n    \"rustfmt.toml\",\n    \"tsconfig.json\",\n])\n\nalias(\n    name = \"format\",\n    actual = \"@bazel_devtools//tools:format\",\n)\n\nalias(\n    name = \"ide-sync\",\n    actual = \"@bazel_devtools//tools:ide_sync\",\n)\n\nalias(\n    name = \"install-hooks\",\n    actual = \"@bazel_devtools//tools:install-hooks\",\n)\n\nalias(\n    name = \"pre-commit\",\n    actual = \"@bazel_devtools//tools:pre-commit\",\n)\n",
+      "base": "load(\"@aspect_rules_ts//ts:defs.bzl\", \"ts_config\")\n\nts_config(\n    name = \"tsconfig_base\",\n    src = \".bazel_devtools/tsconfig.json\",\n    visibility = [\"//visibility:public\"],\n)\n\nts_config(\n    name = \"tsconfig\",\n    src = \"tsconfig.json\",\n    deps = [\":tsconfig_base\"],\n    visibility = [\"//visibility:public\"],\n)\n\nexports_files([\n    \".bazel_devtools/basedpyright.json\",\n    \".bazel_devtools/biome.json\",\n    \".bazel_devtools/ruff.toml\",\n    \".bazel_devtools/tsconfig.json\",\n    \".clang-format\",\n    \".clang-tidy\",\n    \".github/workflows/bazel-devtools.yml\",\n    \".pre-commit-config.yaml\",\n    \".ruff.toml\",\n    \"basedpyright.json\",\n    \"biome.json\",\n    \"rustfmt.toml\",\n    \"tsconfig.json\",\n])\n\nalias(\n    name = \"format\",\n    actual = \"@bazel_devtools//tools:format\",\n)\n\nalias(\n    name = \"ide-sync\",\n    actual = \"@bazel_devtools//tools:ide_sync\",\n)\n\nalias(\n    name = \"install-hooks\",\n    actual = \"@bazel_devtools//tools:install-hooks\",\n)\n\nalias(\n    name = \"pre-commit\",\n    actual = \"@bazel_devtools//tools:pre-commit\",\n)\n",
       "block_id": "root-aliases",
-      "digest": "cd0c62aa2db02dd1b053722c37bfacee672406cd3994a7a1cb089fb57fe093ca",
+      "digest": "20fe7b3aa68f9a9177cfa5ef3d27a44a6df9b742e8d750b1c0b1a0fc88c34ef5",
       "ownership": "managed_block",
       "template_version": "0.1.0"
     },

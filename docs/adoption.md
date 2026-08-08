@@ -92,8 +92,10 @@ existing policy:
   declarations with the generated `ide-dependencies` block. Do the same for
   existing `aspect_rules_js` or `aspect_rules_ts` declarations when enabling
   TypeScript. Also resolve root targets named `format`, `ide-sync`,
-  `install-hooks`, or `pre-commit`, and any files already occupying
-  `tools/bazel_devtools/`, before initialization.
+  `install-hooks`, `pre-commit`, `tsconfig_base`, or `tsconfig`, and any files
+  already occupying `tools/bazel_devtools/`, before initialization. TypeScript
+  setup owns the latter two targets; an upgrade stops without writing if
+  hand-written versions must be removed or renamed first.
 - If `.pre-commit-config.yaml` already exists, merge the generated local hook
   with id `bazel-devtools-check`. Setup then preserves the whole file as a
   local override. If `.github/workflows/bazel-devtools.yml` already exists,
@@ -112,9 +114,58 @@ unambiguous effective policy.
 The `typescript` integration pins `rules_js`, `rules_ts`, TypeScript, and Biome.
 It deliberately does not generate application dependencies. Keep the
 repository's `package.json`, `pnpm-lock.yaml`, and npm translation under normal
-application ownership, then point a `ts_project` at a `ts_config` which extends
-the generated root `tsconfig.json`. The checked-in
-`examples/polyglot/typescript` package is the executable React/TSX reference.
+application ownership. Setup generates `//:tsconfig_base` and `//:tsconfig` as
+public `ts_config` targets. Keeping these rules in the root package lets
+`rules_ts` copy each config to the matching output-tree path. A package-level
+strict typecheck config should extend the root file and declare the matching
+provider dependency:
+
+```starlark
+ts_config(
+    name = "tsconfig",
+    src = "tsconfig.json",
+    deps = ["//:tsconfig"],
+)
+
+ts_project(
+    name = "app",
+    # ...
+    no_emit = True,
+    tsconfig = ":tsconfig",
+)
+```
+
+That package's `tsconfig.json` can use `"extends": "../tsconfig.json"`. The
+physical `extends` chain serves editors and TypeScript, while the `deps` chain
+gives Bazel every config file inside the action sandbox. The checked-in
+`examples/polyglot/typescript` package is a typechecked React/TSX configuration
+reference; it is intentionally not bundled or executed.
+
+Keep a bundler's transform config separate from this inherited typecheck
+graph. In `rules_esbuild` 0.27, the `tsconfig` attribute stages only one
+physical config file and does not consume the `TsConfigInfo` dependency graph.
+Passing the inherited package config can therefore omit its base file in the
+transform action. For TSX that can also discard the inherited `react-jsx`
+setting, select the classic JSX transform, and fail at runtime with `React is
+not defined`.
+
+Use a standalone file with every transform-relevant option inline and no
+`extends`, for example:
+
+```json
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "target": "ES2022"
+  }
+}
+```
+
+Expose it as a separate `ts_config` such as `:tsconfig_esbuild`, and point the
+`rules_esbuild` target's `tsconfig` attribute at that label. Continue using the
+inherited `:tsconfig` above for strict `ts_project` type checks. Re-evaluate
+this boundary when upgrading `rules_esbuild`; devtools does not own or pin the
+application bundler.
 
 This split keeps framework upgrades independent of tooling-policy upgrades:
 setup can update strict checks without selecting a React version or replacing
