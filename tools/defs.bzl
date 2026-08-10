@@ -1,6 +1,7 @@
 """Public build helpers used by bootstrapped consuming repositories."""
 
 load("@aspect_rules_lint//format:defs.bzl", "format_multirun")
+load("@rules_python//python:defs.bzl", "py_binary")
 load("//tools:tool_binary.bzl", _tool_binary = "tool_binary")
 
 tool_binary = _tool_binary
@@ -38,3 +39,22 @@ def bazel_devtools_formatters(name, languages, clang_format = None):
         # target-graph driver so rules_lint's JavaScript-only file matcher
         # cannot accidentally discard .ts and .tsx paths.
         native.filegroup(name = name)
+
+
+def bazel_devtools_format_driver(name, languages, biome = None):
+    """Declares the target-graph formatter with only selected tool runfiles."""
+    if "typescript" in languages and not biome:
+        fail("biome is required when TypeScript support is selected")
+    data = [biome] if biome else []
+    env = {
+        "BAZEL_DEVTOOLS_BIOME_RLOCATION": "$(rlocationpath {})".format(biome),
+    } if biome else {}
+    py_binary(
+        name = name,
+        srcs = ["format_driver.py"],
+        data = data,
+        env = env,
+        legacy_create_init = 0,
+        main = "format_driver.py",
+        deps = [Label("@bazel_devtools//tools:format_lib")],
+    )

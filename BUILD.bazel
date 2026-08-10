@@ -29,6 +29,7 @@ exports_files([
     "requirements.in",
     "requirements_lock.txt",
     "tsconfig.json",
+    "tsconfig.user.json",
 ])
 
 filegroup(
@@ -103,12 +104,13 @@ filegroup(
         "examples/polyglot/rustfmt.toml",
         "examples/polyglot/tools/bazel_devtools/BUILD.bazel",
         "examples/polyglot/tools/bazel_devtools/aspects.bzl",
+        "examples/polyglot/tools/bazel_devtools/format_driver.py",
         "examples/polyglot/tsconfig.json",
+        "examples/polyglot/tsconfig.user.json",
         "examples/polyglot/typescript/BUILD.bazel",
+        "examples/polyglot/typescript/editor_excluded.ts",
         "examples/polyglot/typescript/greeting.ts",
         "examples/polyglot/typescript/greeting_view.tsx",
-        "examples/polyglot/typescript/tsconfig.esbuild.json",
-        "examples/polyglot/typescript/tsconfig.json",
         "examples/polyglot/third_party_api/BUILD.bazel",
         "examples/polyglot/third_party_api/__init__.py",
     ],
@@ -141,6 +143,25 @@ bazel_integration_test(
     workspace_path = "examples/polyglot",
 )
 
+# Timing is deliberately opt-in: shared CI machines are unsuitable for stable
+# latency assertions. The runner emits raw Bazel traces and summary data for
+# comparison on a controlled machine.
+bazel_integration_test(
+    name = "polyglot_profile_test",
+    bazel_binaries = bazel_binaries,
+    bazel_version = bazel_binaries.versions.current,
+    tags = [
+        "exclusive",
+        "manual",
+    ],
+    test_runner = "//e2e:profile_runner",
+    workspace_files = [
+        ":distribution_files",
+        ":polyglot_workspace_files",
+    ],
+    workspace_path = "examples/polyglot",
+)
+
 test_suite(
     name = "fast_tests",
     tests = [
@@ -156,6 +177,12 @@ test_suite(
     name = "integration_tests",
     tags = ["manual"],
     tests = [":polyglot_integration_test"],
+)
+
+test_suite(
+    name = "profiling_tests",
+    tags = ["manual"],
+    tests = [":polyglot_profile_test"],
 )
 
 test_suite(

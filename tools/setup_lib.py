@@ -17,6 +17,7 @@ from tools.templates import (
     Ownership,
     Template,
 )
+from tools.typescript_support import is_generated_editor_tsconfig
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -36,6 +37,7 @@ DEDICATED_BLOCK_PATHS = {
     "tools/bazel_devtools/BUILD.bazel": "tools",
     "tools/bazel_devtools/aspects.bzl": "aspects",
 }
+DEDICATED_MANAGED_PATHS = ("tools/bazel_devtools/format_driver.py",)
 MODULE_DEPENDENCY_PATTERN = re.compile(
     r"""(?sx)
     \bbazel_dep\s*\([^)]*\bname\s*=\s*['\"]
@@ -57,6 +59,14 @@ ROOT_TS_CONFIG_LOAD_PATTERN = re.compile(
     """
 )
 PRE_COMMIT_HOOK_PATTERN = re.compile(r"(?m)^\s*-\s+id:\s*bazel-devtools-check\s*$")
+JSONC_COMMENT_PATTERN = re.compile(
+    r'(?P<string>"(?:\\.|[^"\\])*")|(?P<comment>//[^\r\n]*|/\*.*?\*/)',
+    re.DOTALL,
+)
+JSONC_TRAILING_COMMA_PATTERN = re.compile(
+    r'(?P<string>"(?:\\.|[^"\\])*")|,(?=\s*[}\]])',
+    re.DOTALL,
+)
 
 
 class SetupError(RuntimeError):
@@ -361,10 +371,27 @@ def _preflight_initialize(workspace: Path, templates: tuple[Template, ...]) -> N
             parse_blocks(path.read_text(encoding="utf-8"))
 
 
+def _replace_jsonc_comment(match: re.Match[str]) -> str:
+    string = match.group("string")
+    if string is not None:
+        return string
+    return "\n" * match.group(0).count("\n")
+
+
+def _replace_jsonc_trailing_comma(match: re.Match[str]) -> str:
+    return match.group("string") or ""
+
+
+def _strip_jsonc(content: str) -> str:
+    """Remove JSONC comments and trailing commas without touching strings."""
+    without_comments = JSONC_COMMENT_PATTERN.sub(_replace_jsonc_comment, content)
+    return JSONC_TRAILING_COMMA_PATTERN.sub(_replace_jsonc_trailing_comma, without_comments)
+
+
 def _json_extends(path: Path, expected: str) -> bool:
     try:
         decoded: object = json.loads(  # pyright: ignore[reportAny]
-            path.read_text(encoding="utf-8")
+            _strip_jsonc(path.read_text(encoding="utf-8"))
         )
     except (OSError, json.JSONDecodeError):
         return False
@@ -513,16 +540,31 @@ def _typescript_policy_issues(
             )
         )
 
+    tsconfig_user = workspace / "tsconfig.user.json"
+    if (
+        "tsconfig.user.json" in template_paths
+        and tsconfig_user.exists()
+        and not _json_extends(tsconfig_user, "./.bazel_devtools/tsconfig.json")
+    ):
+        issues.append(
+            _message(
+                "existing tsconfig.user.json does not inherit the bazel_devtools TypeScript",
+                "baseline;",
+                "add the generated baseline before initializing",
+            )
+        )
+
     tsconfig = workspace / "tsconfig.json"
     if (
         "tsconfig.json" in template_paths
         and tsconfig.exists()
-        and not _json_extends(tsconfig, "./.bazel_devtools/tsconfig.json")
+        and not is_generated_editor_tsconfig(tsconfig.read_text(encoding="utf-8"))
     ):
         issues.append(
             _message(
-                "existing tsconfig.json does not inherit the bazel_devtools TypeScript baseline;",
-                "add the generated baseline before initializing",
+                "existing tsconfig.json cannot be adopted as generated editor metadata; move",
+                "its application compiler options to tsconfig.user.json, make that file extend",
+                "./.bazel_devtools/tsconfig.json, then remove tsconfig.json before initializing",
             )
         )
 
@@ -559,6 +601,18 @@ def _dedicated_file_issues(
                 _message(
                     f"existing {relative} occupies a bazel_devtools integration path;",
                     "move or merge it explicitly before initializing",
+                )
+            )
+    for relative in DEDICATED_MANAGED_PATHS:
+        template = by_path.get(relative)
+        path = workspace / relative
+        if template is None or not path.exists():
+            continue
+        if path.read_text(encoding="utf-8") != template.content:
+            issues.append(
+                _message(
+                    f"existing {relative} occupies a bazel_devtools integration path;",
+                    "move or reconcile it before initializing",
                 )
             )
     return issues

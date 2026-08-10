@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
 from typing import TYPE_CHECKING, cast
+
+from python.runfiles import runfiles
 
 from tools.bazel_support import bazel_command, bazel_workspace, main_repo_source_path, run_bazel
 from tools.language_support import configured_languages
@@ -62,7 +65,7 @@ def _owned_sources(
             ("srcs",),
         ),
         "typescript": (
-            "(ts_project|ts_project_rule) rule",
+            None,
             "no-biome-format",
             ("srcs",),
         ),
@@ -70,9 +73,15 @@ def _owned_sources(
     owned: list[str] = []
     for language in selected_languages:
         rule_kinds, language_opt_out, attributes = languages[language]
-        language_targets = f'kind("{rule_kinds}", ({eligible}))'
+        language_targets = (
+            f'kind("{rule_kinds}", ({eligible}))' if rule_kinds is not None else eligible
+        )
         language_targets += f' except attr("tags", "{language_opt_out}", ({language_targets}))'
-        owned.extend(f"labels({attribute}, ({language_targets}))" for attribute in attributes)
+        for attribute in attributes:
+            expression = f"labels({attribute}, ({language_targets}))"
+            if language == "typescript":
+                expression = f'filter(".*[.]tsx?$", {expression})'
+            owned.append(expression)
     owned_files = " union ".join(owned)
     expression = f'kind("source file", {owned_files})'
     output = run_bazel(
@@ -154,20 +163,40 @@ def main() -> int:
             ]
         )
     if typescript_sources:
-        commands.append(
-            [
-                "run",
-                "//tools/bazel_devtools:biome_cwd",
-                "--",
-                "format",
-                "--write",
-                "--config-path=biome.json",
-                "--max-diagnostics=none",
-                *[str(path) for path in typescript_sources],
-            ]
+        runfiles_manifest = runfiles.Create()
+        biome_runfile = os.environ.get("BAZEL_DEVTOOLS_BIOME_RLOCATION")
+        biome = (
+            runfiles_manifest.Rlocation(biome_runfile)
+            if runfiles_manifest is not None and biome_runfile
+            else None
         )
+        if biome is not None:
+            commands.append(
+                [
+                    biome,
+                    "format",
+                    "--write",
+                    "--config-path=biome.json",
+                    "--max-diagnostics=none",
+                    *[str(path) for path in typescript_sources],
+                ]
+            )
+        else:
+            commands.append(
+                [
+                    "run",
+                    "//tools/bazel_devtools:biome_cwd",
+                    "--",
+                    "format",
+                    "--write",
+                    "--config-path=biome.json",
+                    "--max-diagnostics=none",
+                    *[str(path) for path in typescript_sources],
+                ]
+            )
     for command in commands:
-        result = subprocess.run(bazel_command(command), cwd=workspace, check=False)
+        executable = bazel_command(command) if command[0] == "run" else command
+        result = subprocess.run(executable, cwd=workspace, check=False)
         if result.returncode:
             return result.returncode
     return 0

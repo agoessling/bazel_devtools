@@ -15,7 +15,7 @@ ts_config(
 
 ts_config(
     name = "tsconfig",
-    src = "tsconfig.json",
+    src = "tsconfig.user.json",
     deps = [":tsconfig_base"],
     visibility = ["//visibility:public"],
 )
@@ -34,11 +34,12 @@ exports_files([
     "biome.json",
     "rustfmt.toml",
     "tsconfig.json",
+    "tsconfig.user.json",
 ])
 
 alias(
     name = "format",
-    actual = "@bazel_devtools//tools:format",
+    actual = "//tools/bazel_devtools:format",
 )
 
 alias(

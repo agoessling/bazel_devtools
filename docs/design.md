@@ -51,9 +51,11 @@ repository-wide filesystem walk from rewriting vendored or incidental files.
 
 Tool-native inheritance is preferred. `.bazel_devtools/ruff.toml`,
 `.bazel_devtools/basedpyright.json`, `.bazel_devtools/biome.json`, and
-`.bazel_devtools/tsconfig.json` contain managed defaults; the root configs are
-user-owned and extend them. Tools without useful inheritance receive a
-small managed block in their normal configuration file.
+`.bazel_devtools/tsconfig.json` contain managed defaults. User-owned root
+configs extend them, with TypeScript application choices living in
+`tsconfig.user.json`. The root `tsconfig.json` is the exception: it is generated
+editor metadata that extends the user config. Tools without useful inheritance
+receive a small managed block in their normal configuration file.
 
 The baseline is strict and explicit: enable the broadest coherent stable rule
 set, then record exceptions by rule name with a reason. Avoid preview rules and
@@ -139,27 +141,23 @@ configuration, write-mode target discovery, and IDE synchronization. A
 language-specific public `.bzl` facade avoids loading another language's rule
 set merely to construct the selected aspects.
 
-TypeScript checks attach only to first-party `ts_project` source ownership.
-Biome supplies formatting and syntax/semantic lint rules from a pinned native
-binary, while `rules_ts` supplies the compiler-backed typecheck test. React and
-other npm packages stay in the consumer's own lockfile and target graph; the
-tooling module does not choose application dependencies.
+TypeScript checks attach to direct `.ts` and `.tsx` sources of any first-party
+Bazel rule with a `srcs` attribute. This source-shaped contract supports custom
+rules without copying `rules_ts` implementation names into aspects, formatting,
+and editor discovery. Biome supplies formatting and syntax/semantic lint rules
+from a pinned native binary, while `rules_ts` supplies the compiler-backed
+typecheck test. React and other npm packages stay in the consumer's own lockfile
+and target graph; the tooling module does not choose application dependencies.
 
 Setup publishes `//:tsconfig_base` and `//:tsconfig` as root-package
-`ts_config` targets. Root placement is required because `rules_ts` copies each
-source config to the corresponding output-tree path and rejects a direct
-source from another Bazel package. Package configs use a physical JSON
-`extends` edge for TypeScript and editors plus a Bazel `deps` edge for sandbox
-inputs. The root names are collision-checked outside the managed block during
-both initialization and language-enabling upgrades.
-
-Bundler transforms are a separate boundary. `rules_esbuild` 0.27 stages only
-the single physical file named by its `tsconfig` attribute and does not follow
-the `TsConfigInfo` dependency graph. A standalone, non-inheriting transform
-config must repeat settings such as `jsx: react-jsx`; strict `ts_project`
-typechecking continues to use the inherited provider graph. The application
-owns that bundler-specific config because bazel_devtools does not select a
-bundler.
+`ts_config` targets. The first exposes the managed diagnostics baseline and the
+second exposes user-owned application options; their provider edge makes both
+files available inside sandboxed typecheck actions. A `ts_project` uses an
+inline `tsconfig = {}` plus `extends = "//:tsconfig"`, allowing `rules_ts` to
+generate its exact target source list without adding package-local editor
+configs. The root names are collision-checked outside the managed block during
+both initialization and language-enabling upgrades. Build transforms and
+bundler-specific options remain outside the bazel_devtools policy boundary.
 
 Changing the selection uses the normal upgrade state machine. Shared generated
 blocks receive a three-way update, newly selected policy is adopted, and
@@ -226,6 +224,10 @@ versions because the handoff formats (`pyrightconfig.json`,
 The Pyright handoff enumerates Bazel-owned source files explicitly; import
 search paths remain separate in `extraPaths` and do not broaden the analysis
 set.
+The generated root TypeScript config similarly enumerates direct first-party
+sources, extends the application-owned `tsconfig.user.json`, and honors
+`no-ide`. A stable comment marker distinguishes it from a legacy user-owned
+root config so setup and sync fail safely instead of overwriting policy.
 When an editor upgrade exposes a mismatch, fix the generated model or document
 a compatibility bound; do not silently depend on an editor's workspace scan.
 

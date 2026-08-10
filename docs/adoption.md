@@ -81,9 +81,12 @@ existing policy:
   `./.bazel_devtools/biome.json`. If the repository uses `biome.jsonc`, choose
   one root filename and consolidate the policy before setup so Biome has one
   unambiguous configuration chain.
-- Make an existing `tsconfig.json` extend
-  `./.bazel_devtools/tsconfig.json`; project and package configs may then extend
-  the root config normally.
+- Move compiler and application choices from an existing `tsconfig.json` into
+  `tsconfig.user.json`, retaining
+  `"extends": "./.bazel_devtools/tsconfig.json"`, then remove the old root
+  file. Setup creates a marked `tsconfig.json` that `ide-sync` can safely
+  regenerate from Bazel-owned sources. An unmarked root config blocks adoption
+  and language-enabling upgrades before any writes occur.
 - For an existing `.clang-format`, `.clang-tidy`, or `rustfmt.toml`, move the
   file aside, run setup, and merge intentional overrides into the generated
   managed block. Keep the original file available for review until the first
@@ -116,60 +119,27 @@ It deliberately does not generate application dependencies. Keep the
 repository's `package.json`, `pnpm-lock.yaml`, and npm translation under normal
 application ownership. Setup generates `//:tsconfig_base` and `//:tsconfig` as
 public `ts_config` targets. Keeping these rules in the root package lets
-`rules_ts` copy each config to the matching output-tree path. A package-level
-strict typecheck config should extend the root file and declare the matching
-provider dependency:
+`rules_ts` make both inherited configs available to sandboxed actions. Put
+application compiler choices such as JSX mode, module resolution, libraries,
+and output target in `tsconfig.user.json`. Let `rules_ts` generate each
+target-specific config and exact source list:
 
 ```starlark
-ts_config(
-    name = "tsconfig",
-    src = "tsconfig.json",
-    deps = ["//:tsconfig"],
-)
-
 ts_project(
     name = "app",
     # ...
+    extends = "//:tsconfig",
     no_emit = True,
-    tsconfig = ":tsconfig",
+    tsconfig = {},
 )
 ```
 
-That package's `tsconfig.json` can use `"extends": "../tsconfig.json"`. The
-physical `extends` chain serves editors and TypeScript, while the `deps` chain
-gives Bazel every config file inside the action sandbox. The checked-in
-`examples/polyglot/typescript` package is a typechecked React/TSX configuration
-reference; it is intentionally not bundled or executed.
-
-Keep a bundler's transform config separate from this inherited typecheck
-graph. In `rules_esbuild` 0.27, the `tsconfig` attribute stages only one
-physical config file and does not consume the `TsConfigInfo` dependency graph.
-Passing the inherited package config can therefore omit its base file in the
-transform action. For TSX that can also discard the inherited `react-jsx`
-setting, select the classic JSX transform, and fail at runtime with `React is
-not defined`.
-
-Use a standalone file with every transform-relevant option inline and no
-`extends`, for example:
-
-```json
-{
-  "compilerOptions": {
-    "jsx": "react-jsx",
-    "target": "ES2022"
-  }
-}
-```
-
-Expose it as a separate `ts_config` such as `:tsconfig_esbuild`, and point the
-`rules_esbuild` target's `tsconfig` attribute at that label. Continue using the
-inherited `:tsconfig` above for strict `ts_project` type checks. Re-evaluate
-this boundary when upgrading `rules_esbuild`; devtools does not own or pin the
-application bundler.
-
-This split keeps framework upgrades independent of tooling-policy upgrades:
-setup can update strict checks without selecting a React version or replacing
-the application's package-manager lockfile.
+This keeps package directories free of broad physical `tsconfig.json` files
+that would cause a language server to infer a wider source boundary. The
+checked-in `examples/polyglot/typescript` package is a typechecked React/TSX
+configuration reference; it is intentionally not bundled or executed. Build
+transforms and bundler configuration remain application-owned because
+bazel_devtools does not choose a bundler.
 
 ## Presubmit behavior
 

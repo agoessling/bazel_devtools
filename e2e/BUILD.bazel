@@ -10,6 +10,14 @@ py_binary(
 )
 
 py_binary(
+    name = "profile_runner",
+    srcs = ["profile_runner.py"],
+    legacy_create_init = 0,
+    main = "profile_runner.py",
+    deps = ["//tools:bazel_wrapper"],
+)
+
+py_binary(
     name = "probe_current_neovim",
     srcs = ["probe_current_neovim.py"],
     data = ["current_neovim_probe.lua"],

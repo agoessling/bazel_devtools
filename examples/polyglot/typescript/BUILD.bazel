@@ -1,17 +1,4 @@
-load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
-
-ts_config(
-    name = "tsconfig",
-    src = "tsconfig.json",
-    deps = ["//:tsconfig"],
-)
-
-# A bundler with a single-file tsconfig attribute must receive a standalone
-# transform config rather than the inherited typecheck provider graph.
-ts_config(
-    name = "tsconfig_esbuild",
-    src = "tsconfig.esbuild.json",
-)
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
 
 ts_project(
     name = "greeting",
@@ -19,10 +6,17 @@ ts_project(
         "greeting.ts",
         "greeting_view.tsx",
     ],
+    extends = "//:tsconfig",
     no_emit = True,
-    tsconfig = ":tsconfig",
+    tsconfig = {},
     deps = [
         "//:node_modules/@types/react",
         "//:node_modules/react",
     ],
+)
+
+filegroup(
+    name = "editor_excluded",
+    srcs = ["editor_excluded.ts"],
+    tags = ["no-ide"],
 )

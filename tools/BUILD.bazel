@@ -64,19 +64,34 @@ py_library(
         "templates.py",
     ],
     imports = [".."],
-    deps = [":languages"],
+    deps = [
+        ":languages",
+        ":typescript_support",
+    ],
 )
 
-py_binary(
-    name = "format",
+py_library(
+    name = "typescript_support",
+    srcs = ["typescript_support.py"],
+    imports = [".."],
+)
+
+py_library(
+    name = "format_lib",
     srcs = ["format_targets.py"],
-    legacy_create_init = 0,
-    main = "format_targets.py",
     deps = [
         ":bazel_support",
         ":language_support",
         ":languages",
+        "@rules_python//python/runfiles",
     ],
+)
+
+py_binary(
+    name = "format",
+    legacy_create_init = 0,
+    main_module = "tools.format_targets",
+    deps = [":format_lib"],
 )
 
 py_binary(
@@ -88,6 +103,7 @@ py_binary(
         ":bazel_support",
         ":bazel_wrapper",
         ":language_support",
+        ":typescript_support",
     ],
 )
 

@@ -13,7 +13,7 @@ The default policy uses:
 - clang-format and clang-tidy for C and C++;
 - rustfmt, Clippy, and rust-analyzer for Rust;
 - Biome for TypeScript and TSX formatting and linting;
-- TypeScript 5.9 through `rules_ts` with a strict inherited `tsconfig.json`;
+- TypeScript 5.9 through `rules_ts` with a strict inherited `tsconfig.user.json`;
 - target-graph discovery, with generated and external files excluded by default;
 - editor-owned language-server binaries with Bazel-generated project metadata.
 
@@ -64,7 +64,7 @@ bazel run @bazel_devtools//tools:setup -- plan --language python --language cpp
 bazel run @bazel_devtools//tools:setup -- init --language python --language cpp
 bazel test //...
 bazel run //:install-hooks
-bazel run @bazel_devtools//tools:format -- //...
+bazel run //:format -- //...
 bazel run //:ide-sync
 ```
 
@@ -91,14 +91,15 @@ configuration.
 
 Commit the files created by `setup init`. Ruff, BasedPyright, Biome, and
 TypeScript use native configuration inheritance, so repository overrides
-belong in `.ruff.toml`, `basedpyright.json`, `biome.json`, and `tsconfig.json`.
+belong in `.ruff.toml`, `basedpyright.json`, `biome.json`, and
+`tsconfig.user.json`. The root `tsconfig.json` is generated editor metadata;
+do not put application policy in it.
 TypeScript setup owns the toolchain and policy integration, while an
 application continues to own its `package.json`, package-manager lockfile,
 React version, and Bazel npm targets. Setup also publishes `//:tsconfig_base`
-and `//:tsconfig` with the Bazel provider edges needed by package configs in
-sandboxed typecheck actions. Bundler-specific transform configs remain
-application-owned and should be standalone when the bundler accepts only one
-physical config file. Files that cannot inherit contain
+and `//:tsconfig` with the Bazel provider edges needed by sandboxed typecheck
+actions. Build and bundler configuration remains application-owned. Files that
+cannot inherit contain
 narrowly scoped markers such as:
 
 ```text
@@ -195,14 +196,17 @@ project models. `bazel run //:ide-sync` writes:
 
 - `pyrightconfig.json` for BasedPyright/Pyright;
 - `compile_commands.json` for clangd;
-- `rust-project.json` for rust-analyzer.
+- `rust-project.json` for rust-analyzer;
+- `tsconfig.json` for the TypeScript language server.
 
-For TypeScript, the command validates the inherited root `tsconfig.json`; the
-editor's TypeScript language server consumes it natively.
+The generated TypeScript config extends `tsconfig.user.json` and lists the
+exact Bazel-owned `.ts` and `.tsx` sources of first-party targets, excluding
+targets tagged `no-ide`. Its marker prevents sync from overwriting an
+application-owned config during adoption.
 
-The Pyright model contains an explicit `include` list of Bazel-owned `.py` and
-`.pyi` source files. This keeps workspace diagnostics enabled without allowing
-BasedPyright to enumerate Bazel outputs, generated sources, or unrelated files.
+The Pyright and TypeScript models contain explicit Bazel-owned source lists.
+This keeps workspace diagnostics enabled without allowing language servers to
+enumerate Bazel outputs, generated sources, or unrelated files.
 
 This is editor-neutral. A pinned headless Neovim validates the metadata in CI,
 and maintainers can exercise their real configuration with:

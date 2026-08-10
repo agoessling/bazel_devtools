@@ -7,7 +7,6 @@ load(
     _first_party_dependency_attributes = "first_party_dependency_attributes",
 )
 
-_TYPESCRIPT_RULE_KINDS = ["ts_project", "ts_project_rule"]
 _TYPESCRIPT_EXTENSIONS = ["ts", "tsx"]
 
 _BiomeLintPropagationInfo = provider(
@@ -50,7 +49,7 @@ def _biome_lint_impl(target, ctx):
     tags = getattr(ctx.rule.attr, "tags", [])
     if "no-lint" in tags or "no-biome-lint" in tags:
         return _merge_biome_lint_outputs(ctx)
-    if ctx.rule.kind not in ctx.attr._rule_kinds or not hasattr(ctx.rule.attr, "srcs"):
+    if not hasattr(ctx.rule.attr, "srcs"):
         return _merge_biome_lint_outputs(ctx)
     sources = [
         file
@@ -94,9 +93,8 @@ def biome_lint_aspect(
         binary,
         config,
         configs = [],
-        rule_kinds = _TYPESCRIPT_RULE_KINDS,
         attr_aspects = _first_party_dependency_attributes):
-    """Creates a first-party, graph-propagating Biome lint aspect."""
+    """Creates a first-party Biome aspect for rules owning TypeScript sources."""
     return aspect(
         implementation = _biome_lint_impl,
         attr_aspects = attr_aspects,
@@ -114,7 +112,6 @@ def biome_lint_aspect(
                 default = [config] + configs,
                 allow_files = True,
             ),
-            "_rule_kinds": attr.string_list(default = rule_kinds),
         },
     )
 
@@ -123,13 +120,11 @@ def biome_format_aspect(
         binary,
         config,
         configs = [],
-        rule_kinds = _TYPESCRIPT_RULE_KINDS,
         attr_aspects = _first_party_dependency_attributes):
-    """Creates a first-party, graph-propagating TypeScript format aspect."""
+    """Creates a first-party format aspect for rules owning TypeScript sources."""
     return _biome_format_aspect(
         binary = binary,
         config = config,
         configs = configs,
-        rule_kinds = rule_kinds,
         attr_aspects = attr_aspects,
     )

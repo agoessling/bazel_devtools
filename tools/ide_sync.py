@@ -22,12 +22,15 @@ from tools.bazel_support import (
 from tools.bazel_wrapper import write_bazel_wrapper
 from tools.language_support import configured_languages
 from tools.languages import SUPPORTED_LANGUAGES
+from tools.typescript_support import is_generated_editor_tsconfig, render_editor_tsconfig
 
 PY_TARGETS = 'kind("py_(library|binary|test) rule", //...) except attr("tags", "no-ide", //...)'
 PY_MATERIALIZATION_TARGETS = (
     'kind("py_(binary|test) rule", //...) except attr("tags", "no-ide", //...)'
 )
 PYTHON_EXTENSIONS = {".py", ".pyi"}
+TYPESCRIPT_EXTENSIONS = {".ts", ".tsx"}
+TYPESCRIPT_TARGETS = '(//...) except attr("tags", "no-ide", //...)'
 
 
 def _run_recursive_bazel_tool(workspace: Path, *arguments: str) -> str:
@@ -160,6 +163,12 @@ def _sync_cpp(workspace: Path) -> None:
         workspace,
         "--incompatible_autoload_externally=+@rules_python,+@rules_cc",
         "@hedron_compile_commands//:refresh_all",
+        "--",
+        # Hedron classifies CppCompile actions by source extension and cannot
+        # parse the .h inputs emitted by rules that enable parse_headers. The
+        # extractor discovers headers itself, so those validation-only actions
+        # are redundant for compile_commands.json.
+        "--features=-parse_headers",
     )
     print(f"wrote {workspace / 'compile_commands.json'}")
 
@@ -172,12 +181,41 @@ def _sync_rust(workspace: Path) -> None:
     print(f"wrote {workspace / 'rust-project.json'}")
 
 
+def _typescript_owned_sources(workspace: Path) -> list[Path]:
+    output = run_bazel(
+        workspace,
+        "query",
+        "--noshow_progress",
+        "--output=label",
+        f'kind("source file", labels(srcs, ({TYPESCRIPT_TARGETS})))',
+    )
+    sources: set[Path] = set()
+    for label in output.splitlines():
+        relative = main_repo_source_path(label.strip())
+        if relative is None or relative.suffix not in TYPESCRIPT_EXTENSIONS:
+            continue
+        absolute = (workspace / relative).resolve()
+        try:
+            absolute.relative_to(workspace)
+        except ValueError as error:
+            msg = f"TypeScript source escaped the workspace: {relative}"
+            raise RuntimeError(msg) from error
+        if absolute.is_file():
+            sources.add(relative)
+    return sorted(sources)
+
+
 def _sync_typescript(workspace: Path) -> None:
     config = workspace / "tsconfig.json"
     if not config.is_file():
         msg = f"TypeScript support is missing {config}"
         raise RuntimeError(msg)
-    print(f"using native TypeScript project metadata from {config}")
+    if not is_generated_editor_tsconfig(config.read_text(encoding="utf-8")):
+        msg = f"refusing to overwrite unmarked TypeScript config {config}"
+        raise RuntimeError(msg)
+    sources = _typescript_owned_sources(workspace)
+    config.write_text(render_editor_tsconfig(sources), encoding="utf-8")
+    print(f"wrote {config} ({len(sources)} Bazel-owned sources)")
 
 
 def main() -> int:
@@ -205,7 +243,6 @@ def main() -> int:
         ("python", "py_(library|binary|test) rule", _sync_python),
         ("cpp", "cc_(library|binary|test) rule", _sync_cpp),
         ("rust", "rust_(library|binary|test) rule", _sync_rust),
-        ("typescript", "(ts_project|ts_project_rule) rule", _sync_typescript),
     )
     try:
         for language, kinds, operation in operations:
@@ -215,6 +252,8 @@ def main() -> int:
                 operation(workspace)
             else:
                 print(f"skipped {language}: no matching Bazel targets")
+        if "typescript" in selected:
+            _sync_typescript(workspace)
     except (RuntimeError, TypeError) as error:
         print(error, file=sys.stderr)
         return 1

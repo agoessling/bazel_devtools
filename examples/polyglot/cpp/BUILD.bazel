@@ -4,6 +4,7 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 cc_library(
     name = "greeting",
     srcs = ["greeting.cc"],
+    features = ["parse_headers"],
     hdrs = ["greeting.h"],
 )
 

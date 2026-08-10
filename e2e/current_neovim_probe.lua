@@ -3,6 +3,7 @@ local contracts = {
   { file = "python/greeting.py", clients = { "basedpyright", "ruff" } },
   { file = "cpp/greeting.cc", clients = { "clangd" } },
   { file = "rust/greeting.rs", clients = { "rust_analyzer" } },
+  { file = "typescript/greeting.ts", clients = { "ts_ls", "biome" } },
 }
 
 for _, contract in ipairs(contracts) do

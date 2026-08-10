@@ -7,6 +7,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from tools.languages import SUPPORTED_LANGUAGES, normalize_languages
+from tools.typescript_support import render_editor_tsconfig
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -249,7 +250,7 @@ BIOME_POLICY = """\
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "preset": "recommended"
     }
   },
   "javascript": {
@@ -266,24 +267,14 @@ BIOME_POLICY = """\
 TSCONFIG_POLICY = """\
 {
   "compilerOptions": {
-    "allowJs": false,
-    "esModuleInterop": true,
     "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true,
-    "isolatedModules": true,
-    "jsx": "react-jsx",
-    "lib": ["DOM", "DOM.Iterable", "ES2023"],
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "noEmit": true,
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
     "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "strict": true,
-    "target": "ES2022",
-    "verbatimModuleSyntax": true
+    "strict": true
   }
 }
 """
@@ -301,6 +292,19 @@ TSCONFIG_USER_CONFIG = """\
   "extends": "./.bazel_devtools/tsconfig.json"
 }
 """
+
+
+TSCONFIG_EDITOR_CONFIG = render_editor_tsconfig([])
+
+
+FORMAT_DRIVER = '''\
+"""Run the Bazel-owned formatter with this repository's selected tool data."""
+
+from tools.format_targets import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
 
 
 BAZELRC_IMPORT_BLOCK = """\
@@ -452,7 +456,13 @@ def _aspects_bzl(languages: tuple[str, ...]) -> str:
 
 def _tools_build(languages: tuple[str, ...]) -> str:
     parts = [
-        'load("@bazel_devtools//tools:defs.bzl", "bazel_devtools_formatters", "tool_binary")',
+        """\
+load(
+    "@bazel_devtools//tools:defs.bzl",
+    "bazel_devtools_format_driver",
+    "bazel_devtools_formatters",
+    "tool_binary",
+)""",
         'package(default_visibility = ["//visibility:public"])',
     ]
     if "cpp" in languages:
@@ -492,6 +502,16 @@ bazel_devtools_formatters(
 {arguments}
 )"""
     )
+    driver_arguments = f"    languages = [\n{language_lines}\n    ],"
+    if "typescript" in languages:
+        driver_arguments += '\n    biome = ":biome",'
+    parts.append(
+        f"""\
+bazel_devtools_format_driver(
+    name = "format",
+{driver_arguments}
+)"""
+    )
     return "\n\n".join(parts) + "\n"
 
 
@@ -520,6 +540,7 @@ def _root_build_block(languages: tuple[str, ...]) -> str:
                 ".bazel_devtools/tsconfig.json",
                 "biome.json",
                 "tsconfig.json",
+                "tsconfig.user.json",
             )
         )
     export_lines = "\n".join(f'    "{path}",' for path in sorted(exported))
@@ -536,7 +557,7 @@ ts_config(
 
 ts_config(
     name = "tsconfig",
-    src = "tsconfig.json",
+    src = "tsconfig.user.json",
     deps = [":tsconfig_base"],
     visibility = ["//visibility:public"],
 )
@@ -549,7 +570,7 @@ ts_config(
 
 alias(
     name = "format",
-    actual = "@bazel_devtools//tools:format",
+    actual = "//tools/bazel_devtools:format",
 )
 
 alias(
@@ -724,7 +745,8 @@ def templates_for_languages(languages: Iterable[str]) -> tuple[Template, ...]:
                     Ownership.MANAGED_FILE,
                 ),
                 Template("biome.json", BIOME_USER_CONFIG, Ownership.CREATE_ONLY),
-                Template("tsconfig.json", TSCONFIG_USER_CONFIG, Ownership.CREATE_ONLY),
+                Template("tsconfig.user.json", TSCONFIG_USER_CONFIG, Ownership.CREATE_ONLY),
+                Template("tsconfig.json", TSCONFIG_EDITOR_CONFIG, Ownership.CREATE_ONLY),
             )
         )
     templates.extend(
@@ -771,6 +793,11 @@ def templates_for_languages(languages: Iterable[str]) -> tuple[Template, ...]:
                 _tools_build(selected),
                 Ownership.MANAGED_BLOCK,
                 "tools",
+            ),
+            Template(
+                "tools/bazel_devtools/format_driver.py",
+                FORMAT_DRIVER,
+                Ownership.MANAGED_FILE,
             ),
             Template(
                 "BUILD.bazel",

@@ -4,7 +4,6 @@ load("//checks:propagation.bzl", "dependency_infos")
 
 _PYTHON_RULE_KINDS = ["py_binary", "py_library", "py_test"]
 _CPP_RULE_KINDS = ["cc_binary", "cc_library", "cc_test"]
-_TYPESCRIPT_RULE_KINDS = ["ts_project", "ts_project_rule"]
 _PYTHON_EXTENSIONS = ["py", "pyi"]
 _CPP_EXTENSIONS = ["c", "cc", "cpp", "cxx", "c++", "h", "hh", "hpp", "hxx", "inc"]
 _TYPESCRIPT_EXTENSIONS = ["ts", "tsx"]
@@ -121,8 +120,6 @@ def _biome_format_impl(target, ctx):
     tags = _tags(ctx)
     if "no-format" in tags or "no-biome-format" in tags:
         return _merge_biome_format_outputs(ctx)
-    if ctx.rule.kind not in ctx.attr._rule_kinds:
-        return _merge_biome_format_outputs(ctx)
     sources = _owned_sources(ctx, _TYPESCRIPT_EXTENSIONS)
     if not sources:
         return _merge_biome_format_outputs(ctx)
@@ -146,9 +143,8 @@ def biome_format_aspect(
         binary,
         config,
         configs = [],
-        rule_kinds = _TYPESCRIPT_RULE_KINDS,
         attr_aspects = []):
-    """Creates a Biome format-check aspect for TypeScript targets."""
+    """Creates a Biome format-check aspect for rules owning TypeScript sources."""
     return aspect(
         implementation = _biome_format_impl,
         attr_aspects = attr_aspects,
@@ -166,7 +162,6 @@ def biome_format_aspect(
                 default = [config] + configs,
                 allow_files = True,
             ),
-            "_rule_kinds": attr.string_list(default = rule_kinds),
         },
     )
 
