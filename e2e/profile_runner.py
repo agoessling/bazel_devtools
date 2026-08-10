@@ -210,8 +210,17 @@ class Profiler:
             options.append(f"--repository_cache={self.repository_cache}")
         return options
 
+    @staticmethod
+    def _startup_options(output_root: Path) -> list[str]:
+        # Pin output_base explicitly so a user bazelrc cannot redirect this
+        # nested Bazel invocation back to the outer test server's output base.
+        return [
+            f"--output_user_root={output_root}",
+            f"--output_base={output_root / 'output-base'}",
+        ]
+
     def _environment(self, output_root: Path) -> dict[str, str]:
-        startup = [f"--output_user_root={output_root}"]
+        startup = self._startup_options(output_root)
         command = self._command_options()
         wrapper_directory = self.temporary / "profile-bazel-wrappers" / output_root.name
         wrapper_directory.mkdir(parents=True, exist_ok=True)
@@ -270,7 +279,7 @@ class Profiler:
                 command_options.extend(("--noslim_profile", "--record_full_profiler_data"))
         command = [
             str(self.bazel),
-            f"--output_user_root={output_root}",
+            *self._startup_options(output_root),
             operation.arguments[0],
             *command_options,
             *operation.arguments[1:],

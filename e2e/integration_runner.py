@@ -194,6 +194,7 @@ class Integration:
         self.workspace = self.scratch_repo / "examples/polyglot"
         self.bazel = Path(os.environ["BIT_BAZEL_BINARY"]).resolve()
         self.output_root = Path(os.environ["TEST_TMPDIR"]) / "bazel-output-root"
+        self.output_base = self.output_root / "output-base"
         cache_override = os.environ.get("BAZEL_DEVTOOLS_REPOSITORY_CACHE")
         default_cache = (
             Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
@@ -212,7 +213,14 @@ class Integration:
         workspace: Path | None = None,
     ) -> str:
         selected_workspace = workspace or self.workspace
-        startup_options = [f"--output_user_root={self.output_root}"]
+        # An explicit output_base is required in addition to output_user_root.
+        # A user bazelrc can set output_base directly (as setup-bazel does in
+        # GitHub Actions), which otherwise makes this nested Bazel invocation
+        # wait on the outer `bazel test` server's lock until the test times out.
+        startup_options = [
+            f"--output_user_root={self.output_root}",
+            f"--output_base={self.output_base}",
+        ]
         command_options: list[str] = []
         if self.repository_cache.is_dir():
             command_options.append(f"--repository_cache={self.repository_cache}")
@@ -932,7 +940,9 @@ use_repo(npm, "npm")
         bazel_wrapper = binary_directory / "bazel"
         bazel_wrapper.write_text(
             f"""#!/bin/sh
-exec {json.dumps(str(self.bazel))} --output_user_root={json.dumps(str(self.output_root))} "$@"
+exec {json.dumps(str(self.bazel))} \
+  --output_user_root={json.dumps(str(self.output_root))} \
+  --output_base={json.dumps(str(self.output_base))} "$@"
 """,
             encoding="utf-8",
         )
