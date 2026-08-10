@@ -746,6 +746,54 @@ filegroup(name = "tsconfig")
         self.assertIn("new = True", (self.workspace / "MODULE.bazel").read_text())
         doctor(self.workspace, new)
 
+    def test_upgrade_migrates_the_pristine_legacy_root_typescript_config(self) -> None:
+        current_by_path = {
+            template.path: template for template in templates_for_languages(("typescript",))
+        }
+        baseline = current_by_path[".bazel_devtools/tsconfig.json"]
+        user_config = current_by_path["tsconfig.user.json"]
+        editor_config = current_by_path["tsconfig.json"]
+        legacy = (
+            baseline,
+            Template("tsconfig.json", user_config.content, Ownership.CREATE_ONLY),
+        )
+        current = (baseline, user_config, editor_config)
+        initialize(self.workspace, legacy, languages=("typescript",))
+
+        result = upgrade(self.workspace, current, languages=("typescript",))
+
+        self.assertIn("tsconfig.user.json", result.created)
+        self.assertIn("tsconfig.json", result.changed)
+        self.assertEqual(user_config.content, (self.workspace / "tsconfig.user.json").read_text())
+        self.assertEqual(editor_config.content, (self.workspace / "tsconfig.json").read_text())
+        self.assertTrue(any("migrated pristine legacy" in item for item in result.messages))
+        doctor(self.workspace, current)
+
+    def test_upgrade_rejects_a_customized_legacy_root_typescript_config(self) -> None:
+        current_by_path = {
+            template.path: template for template in templates_for_languages(("typescript",))
+        }
+        baseline = current_by_path[".bazel_devtools/tsconfig.json"]
+        user_config = current_by_path["tsconfig.user.json"]
+        editor_config = current_by_path["tsconfig.json"]
+        legacy = (
+            baseline,
+            Template("tsconfig.json", user_config.content, Ownership.CREATE_ONLY),
+        )
+        current = (baseline, user_config, editor_config)
+        initialize(self.workspace, legacy, languages=("typescript",))
+        legacy_root = self.workspace / "tsconfig.json"
+        legacy_root.write_text(
+            '{"extends": "./.bazel_devtools/tsconfig.json", "compilerOptions": {}}\n',
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(SetupError, "generated editor metadata"):
+            upgrade(self.workspace, current, languages=("typescript",))
+
+        self.assertFalse((self.workspace / "tsconfig.user.json").exists())
+        self.assertIn("compilerOptions", legacy_root.read_text(encoding="utf-8"))
+
     def test_upgrade_adopts_a_preexisting_new_template_as_an_override(self) -> None:
         old = (Template("managed.txt", "old\n", Ownership.MANAGED_FILE),)
         new = (*old, Template("new-managed.txt", "default\n", Ownership.MANAGED_FILE))

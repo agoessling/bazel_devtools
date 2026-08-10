@@ -86,7 +86,9 @@ existing policy:
   `"extends": "./.bazel_devtools/tsconfig.json"`, then remove the old root
   file. Setup creates a marked `tsconfig.json` that `ide-sync` can safely
   regenerate from Bazel-owned sources. An unmarked root config blocks adoption
-  and language-enabling upgrades before any writes occur.
+  and language-enabling upgrades before any writes occur. An upgrade from the
+  prior bazel_devtools layout automatically moves the byte-for-byte pristine
+  legacy default; any customized legacy root remains an explicit migration.
 - For an existing `.clang-format`, `.clang-tidy`, or `rustfmt.toml`, move the
   file aside, run setup, and merge intentional overrides into the generated
   managed block. Keep the original file available for review until the first

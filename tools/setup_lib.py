@@ -524,6 +524,8 @@ def _alternate_python_policy_issues(
 def _typescript_policy_issues(
     workspace: Path,
     templates: tuple[Template, ...],
+    *,
+    allow_legacy_root_migration: bool = False,
 ) -> list[str]:
     template_paths = {template.path for template in templates}
     issues: list[str] = []
@@ -559,6 +561,7 @@ def _typescript_policy_issues(
         "tsconfig.json" in template_paths
         and tsconfig.exists()
         and not is_generated_editor_tsconfig(tsconfig.read_text(encoding="utf-8"))
+        and not allow_legacy_root_migration
     ):
         issues.append(
             _message(
@@ -748,12 +751,18 @@ def _presubmit_adoption_issues(
 def _brownfield_issues(
     workspace: Path,
     templates: tuple[Template, ...],
+    *,
+    allow_legacy_typescript_root_migration: bool = False,
 ) -> list[str]:
     return [
         *_policy_block_issues(workspace, templates),
         *_python_policy_issues(workspace, templates),
         *_alternate_python_policy_issues(workspace, templates),
-        *_typescript_policy_issues(workspace, templates),
+        *_typescript_policy_issues(
+            workspace,
+            templates,
+            allow_legacy_root_migration=allow_legacy_typescript_root_migration,
+        ),
         *_dedicated_file_issues(workspace, templates),
         *_bazel_graph_issues(workspace, templates),
         *_presubmit_adoption_issues(workspace, templates),
@@ -915,10 +924,16 @@ def _preflight_upgrade(
     workspace: Path,
     templates: tuple[Template, ...],
     entries: dict[str, _StateEntry],
+    *,
+    allow_legacy_typescript_root_migration: bool,
 ) -> None:
     """Validate every old managed input before performing any writes."""
     new_templates = tuple(template for template in templates if template.path not in entries)
-    adoption_issues = _brownfield_issues(workspace, new_templates)
+    adoption_issues = _brownfield_issues(
+        workspace,
+        new_templates,
+        allow_legacy_typescript_root_migration=allow_legacy_typescript_root_migration,
+    )
     new_paths = {template.path for template in new_templates}
     active_graph_templates = tuple(
         template
@@ -1094,6 +1109,53 @@ def _upgrade_template(
         _upgrade_managed_block(workspace, template, old_base, entries, result)
 
 
+def _legacy_typescript_root_migration(
+    workspace: Path,
+    templates: tuple[Template, ...],
+    entries: dict[str, _StateEntry],
+    installed_languages: list[str],
+) -> tuple[Template, Template] | None:
+    """Recognize the pristine root TypeScript config installed by the prior layout."""
+    if "typescript" not in installed_languages or ".bazel_devtools/tsconfig.json" not in entries:
+        return None
+    by_path = {template.path: template for template in templates}
+    user_template = by_path.get("tsconfig.user.json")
+    editor_template = by_path.get("tsconfig.json")
+    if (
+        user_template is None
+        or editor_template is None
+        or user_template.ownership is not Ownership.CREATE_ONLY
+        or editor_template.ownership is not Ownership.CREATE_ONLY
+        or not is_generated_editor_tsconfig(editor_template.content)
+    ):
+        return None
+    legacy_root = workspace / editor_template.path
+    user_config = workspace / user_template.path
+    if not legacy_root.is_file() or user_config.exists():
+        return None
+    if legacy_root.read_text(encoding="utf-8") != user_template.content:
+        return None
+    return user_template, editor_template
+
+
+def _migrate_legacy_typescript_root(
+    workspace: Path,
+    migration: tuple[Template, Template] | None,
+    result: Result,
+) -> None:
+    """Move the pristine legacy user config and install generated editor metadata."""
+    if migration is None:
+        return
+    user_template, editor_template = migration
+    legacy_root = workspace / editor_template.path
+    user_config = workspace / user_template.path
+    legacy_root.replace(user_config)
+    legacy_root.write_text(editor_template.content, encoding="utf-8")
+    result.created.append(user_template.path)
+    result.changed.append(editor_template.path)
+    result.messages.append("migrated pristine legacy tsconfig.json policy to tsconfig.user.json")
+
+
 def upgrade(
     workspace: Path,
     templates: Iterable[Template] = TEMPLATES,
@@ -1111,7 +1173,18 @@ def upgrade(
         msg = "bazel_devtools is not initialized; run setup init first"
         raise SetupError(msg)
     result = Result.empty()
-    _preflight_upgrade(workspace, templates, entries)
+    typescript_migration = _legacy_typescript_root_migration(
+        workspace,
+        templates,
+        entries,
+        state["languages"],
+    )
+    _preflight_upgrade(
+        workspace,
+        templates,
+        entries,
+        allow_legacy_typescript_root_migration=typescript_migration is not None,
+    )
     conflicts = _upgrade_conflicts(workspace, templates, entries)
     if conflicts:
         for template, old_base in conflicts:
@@ -1129,6 +1202,8 @@ def upgrade(
                 "language selection was not changed because updates require review"
             )
         return result
+
+    _migrate_legacy_typescript_root(workspace, typescript_migration, result)
 
     for template in templates:
         _upgrade_template(workspace, template, entries, result)

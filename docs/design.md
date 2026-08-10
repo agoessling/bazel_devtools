@@ -228,6 +228,9 @@ The generated root TypeScript config similarly enumerates direct first-party
 sources, extends the application-owned `tsconfig.user.json`, and honors
 `no-ide`. A stable comment marker distinguishes it from a legacy user-owned
 root config so setup and sync fail safely instead of overwriting policy.
+Setup upgrade recognizes and relocates only the exact pristine root config from
+the prior bazel_devtools layout; customized legacy policy still requires an
+explicit user reconciliation.
 When an editor upgrade exposes a mismatch, fix the generated model or document
 a compatibility bound; do not silently depend on an editor's workspace scan.
 
